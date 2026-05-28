@@ -163,17 +163,17 @@ main {{ overflow: auto; max-height: calc(100vh - 61px); }}
 .file-row:hover, .file-row.selected {{ background: #eef4ff; }}
 .file-path {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }}
 .file-meta {{ color: var(--muted); font-size: 12px; white-space: nowrap; }}
-.unread {{ padding: 12px; border-top: 1px solid var(--border); }}
-.unread h2 {{ font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
+.unread-panel {{ padding: 12px; border-top: 1px solid var(--border); }}
+.unread-panel h2 {{ font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
 .unread-item {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; padding: 5px 0; overflow-wrap: anywhere; }}
 .source-head {{ padding: 12px 16px; border-bottom: 1px solid var(--border); background: #fff; position: sticky; top: 0; z-index: 1; }}
 .source-head strong {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-.source {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.55; }}
+.source {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45; overflow-x: auto; }}
 .line {{
-  display: grid; grid-template-columns: 64px minmax(0, 1fr); border-bottom: 1px solid rgba(215,221,229,.45);
+  display: flex; min-width: 100%; border-bottom: 1px solid rgba(215,221,229,.45);
 }}
-.line-no {{ padding: 0 10px; text-align: right; color: var(--muted); user-select: none; border-right: 1px solid rgba(215,221,229,.8); }}
-.line-code {{ padding: 0 12px; white-space: pre; overflow-x: auto; }}
+.line-no {{ flex: 0 0 64px; padding: 0 10px; text-align: right; color: var(--muted); user-select: none; border-right: 1px solid rgba(215,221,229,.8); }}
+.line-code {{ flex: 1 0 auto; padding: 0 12px; white-space: pre; }}
 .line.read .line-code {{ background: rgba(27,154,107,.14); }}
 .line.unread .line-code {{ background: rgba(214,69,69,.09); }}
 .line.search-only .line-code {{ background: rgba(45,108,223,.12); }}
@@ -208,7 +208,7 @@ main {{ overflow: auto; max-height: calc(100vh - 61px); }}
       </div>
     </div>
     <div id="files" class="file-list"></div>
-    <div class="unread">
+    <div class="unread-panel">
       <h2>Unread</h2>
       <div id="unread"></div>
     </div>
