@@ -10,6 +10,64 @@ def _write_jsonl(path: Path, *records: dict[str, object]) -> None:
     path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
 
 
+_UNSET = object()
+
+
+def _claude_tool_use_record(
+    tmp_path: Path,
+    *,
+    tool_name: str,
+    tool_input: dict[str, object],
+    tool_id: str = "toolu_1",
+    turn_id: str = "turn-1",
+    session_id: str = "sess",
+    **extra: object,
+) -> dict[str, object]:
+    record: dict[str, object] = {
+        "type": "assistant",
+        "uuid": turn_id,
+        "sessionId": session_id,
+        "cwd": str(tmp_path),
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": tool_name,
+                    "input": tool_input,
+                }
+            ]
+        },
+    }
+    record.update(extra)
+    return record
+
+
+def _claude_tool_result_record(
+    *,
+    content: object,
+    tool_id: str = "toolu_1",
+    parent_uuid: str = "turn-1",
+    tool_use_result: object = _UNSET,
+    is_error: bool = False,
+) -> dict[str, object]:
+    block: dict[str, object] = {
+        "type": "tool_result",
+        "tool_use_id": tool_id,
+        "content": content,
+    }
+    if is_error:
+        block["is_error"] = True
+    record: dict[str, object] = {
+        "type": "user",
+        "parentUuid": parent_uuid,
+        "message": {"content": [block]},
+    }
+    if tool_use_result is not _UNSET:
+        record["toolUseResult"] = tool_use_result
+    return record
+
+
 def test_backfill_reads_codex_response_item_payload_function_call(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
     transcript = tmp_path / "session.jsonl"
@@ -106,31 +164,17 @@ def test_backfill_reads_claude_bash_tool_use(tmp_path: Path) -> None:
 def test_backfill_reads_claude_read_tool_limit_offset(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
     transcript = tmp_path / "claude.jsonl"
-    transcript.write_text(
-        json.dumps(
-            {
-                "type": "assistant",
-                "uuid": "turn-1",
-                "sessionId": "sess",
-                "cwd": str(tmp_path),
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_1",
-                            "name": "Read",
-                            "input": {
-                                "file_path": str(tmp_path / "app.py"),
-                                "offset": 2,
-                                "limit": 2,
-                            },
-                        }
-                    ]
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_jsonl(
+        transcript,
+        _claude_tool_use_record(
+            tmp_path,
+            tool_name="Read",
+            tool_input={
+                "file_path": str(tmp_path / "app.py"),
+                "offset": 2,
+                "limit": 2,
+            },
+        ),
     )
 
     root, events = backfill_claude_session(transcript_path=transcript)
@@ -141,6 +185,24 @@ def test_backfill_reads_claude_read_tool_limit_offset(tmp_path: Path) -> None:
     assert events[0].tool_name == "Read"
     assert events[0].file == "app.py"
     assert [(r.start, r.end) for r in events[0].ranges] == [(2, 3)]
+
+
+def test_backfill_skips_unpaired_unbounded_claude_read(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    transcript = tmp_path / "claude.jsonl"
+    for tool_name in ("Read", "NotebookRead"):
+        _write_jsonl(
+            transcript,
+            _claude_tool_use_record(
+                tmp_path,
+                tool_name=tool_name,
+                tool_input={"file_path": str(tmp_path / "app.py")},
+            ),
+        )
+
+        _, events = backfill_claude_session(transcript_path=transcript)
+
+        assert events == []
 
 
 def test_backfill_reads_claude_progress_record(tmp_path: Path) -> None:
@@ -577,56 +639,26 @@ def test_backfill_auto_detects_claude_session_id(monkeypatch, tmp_path: Path) ->
 def test_backfill_caps_claude_partial_read_from_tool_result(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
     transcript = tmp_path / "claude.jsonl"
-    transcript.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "uuid": "turn-1",
-                        "sessionId": "sess",
-                        "cwd": str(tmp_path),
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": "toolu_1",
-                                    "name": "Read",
-                                    "input": {"file_path": str(tmp_path / "app.py")},
-                                }
-                            ]
-                        },
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "user",
-                        "parentUuid": "turn-1",
-                        "toolUseResult": {
-                            "type": "text",
-                            "file": {
-                                "filePath": str(tmp_path / "app.py"),
-                                "content": "one\ntwo\n",
-                                "numLines": 2,
-                                "startLine": 1,
-                                "totalLines": 5,
-                            },
-                        },
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": "toolu_1",
-                                    "content": "     1\u2192one\n     2\u2192two",
-                                }
-                            ]
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_jsonl(
+        transcript,
+        _claude_tool_use_record(
+            tmp_path,
+            tool_name="Read",
+            tool_input={"file_path": str(tmp_path / "app.py")},
+        ),
+        _claude_tool_result_record(
+            content="     1\u2192one\n     2\u2192two",
+            tool_use_result={
+                "type": "text",
+                "file": {
+                    "filePath": str(tmp_path / "app.py"),
+                    "content": "one\ntwo\n",
+                    "numLines": 2,
+                    "startLine": 1,
+                    "totalLines": 5,
+                },
+            },
+        ),
     )
 
     _, events = backfill_claude_session(transcript_path=transcript)
@@ -639,48 +671,18 @@ def test_backfill_caps_claude_partial_read_from_tool_result(tmp_path: Path) -> N
 def test_backfill_skips_failed_claude_read_result(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
     transcript = tmp_path / "claude.jsonl"
-    transcript.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "uuid": "turn-1",
-                        "sessionId": "sess",
-                        "cwd": str(tmp_path),
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": "toolu_1",
-                                    "name": "Read",
-                                    "input": {"file_path": str(tmp_path / "app.py")},
-                                }
-                            ]
-                        },
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "user",
-                        "parentUuid": "turn-1",
-                        "toolUseResult": "Error: File is too large to read",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": "toolu_1",
-                                    "is_error": True,
-                                    "content": "<tool_use_error>File is too large</tool_use_error>",
-                                }
-                            ]
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_jsonl(
+        transcript,
+        _claude_tool_use_record(
+            tmp_path,
+            tool_name="Read",
+            tool_input={"file_path": str(tmp_path / "app.py")},
+        ),
+        _claude_tool_result_record(
+            content="<tool_use_error>File is too large</tool_use_error>",
+            tool_use_result="Error: File is too large to read",
+            is_error=True,
+        ),
     )
 
     _, events = backfill_claude_session(transcript_path=transcript)
@@ -691,46 +693,14 @@ def test_backfill_skips_failed_claude_read_result(tmp_path: Path) -> None:
 def test_backfill_caps_claude_partial_read_from_numbered_tool_result(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
     transcript = tmp_path / "claude.jsonl"
-    transcript.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "uuid": "turn-1",
-                        "sessionId": "sess",
-                        "cwd": str(tmp_path),
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": "toolu_1",
-                                    "name": "Read",
-                                    "input": {"file_path": str(tmp_path / "app.py")},
-                                }
-                            ]
-                        },
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "user",
-                        "parentUuid": "turn-1",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": "toolu_1",
-                                    "content": "     2\u2192two\n     3\u2192three",
-                                }
-                            ]
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_jsonl(
+        transcript,
+        _claude_tool_use_record(
+            tmp_path,
+            tool_name="Read",
+            tool_input={"file_path": str(tmp_path / "app.py")},
+        ),
+        _claude_tool_result_record(content="     2\u2192two\n     3\u2192three"),
     )
 
     _, events = backfill_claude_session(transcript_path=transcript)
@@ -743,46 +713,14 @@ def test_backfill_caps_claude_partial_read_from_numbered_tool_result(tmp_path: P
 def test_backfill_caps_claude_partial_read_from_tab_numbered_result(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
     transcript = tmp_path / "claude.jsonl"
-    transcript.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "uuid": "turn-1",
-                        "sessionId": "sess",
-                        "cwd": str(tmp_path),
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": "toolu_1",
-                                    "name": "Read",
-                                    "input": {"file_path": str(tmp_path / "app.py")},
-                                }
-                            ]
-                        },
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "user",
-                        "parentUuid": "turn-1",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": "toolu_1",
-                                    "content": "2\ttwo\n3\tthree",
-                                }
-                            ]
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_jsonl(
+        transcript,
+        _claude_tool_use_record(
+            tmp_path,
+            tool_name="Read",
+            tool_input={"file_path": str(tmp_path / "app.py")},
+        ),
+        _claude_tool_result_record(content="2\ttwo\n3\tthree"),
     )
 
     _, events = backfill_claude_session(transcript_path=transcript)
@@ -799,39 +737,16 @@ def test_backfill_uses_successful_bounded_claude_read_input_when_result_is_plain
     transcript = tmp_path / "claude.jsonl"
     _write_jsonl(
         transcript,
-        {
-            "type": "assistant",
-            "uuid": "turn-1",
-            "sessionId": "sess",
-            "cwd": str(tmp_path),
-            "message": {
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": "toolu_1",
-                        "name": "Read",
-                        "input": {
-                            "file_path": str(tmp_path / "app.py"),
-                            "offset": 2,
-                            "limit": 2,
-                        },
-                    }
-                ]
+        _claude_tool_use_record(
+            tmp_path,
+            tool_name="Read",
+            tool_input={
+                "file_path": str(tmp_path / "app.py"),
+                "offset": 2,
+                "limit": 2,
             },
-        },
-        {
-            "type": "user",
-            "parentUuid": "turn-1",
-            "message": {
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "toolu_1",
-                        "content": "two\nthree",
-                    }
-                ]
-            },
-        },
+        ),
+        _claude_tool_result_record(content="two\nthree"),
     )
 
     _, events = backfill_claude_session(transcript_path=transcript)

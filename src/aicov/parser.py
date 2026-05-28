@@ -27,6 +27,7 @@ NO_RANGE_COMMANDS = {
 }
 
 SEARCH_COMMANDS = {"rg", "grep", "egrep", "fgrep"}
+_XARGS_READ_COMMANDS = {"awk", "cat", "head", "sed", "tail"}
 
 
 def parse_shell_command(
@@ -120,7 +121,10 @@ def _parse_segment(
     first = Path(tokens[0]).name
     if first in SEARCH_COMMANDS:
         return _parse_search_output(tool_response, cwd=cwd, root=root)
+    xargs_pipeline_may_read = "|" in tokens and _xargs_pipeline_may_read_source(tokens)
     if first in NO_RANGE_COMMANDS:
+        if xargs_pipeline_may_read:
+            return [_unknown(segment, "unsupported pipeline")]
         return []
     if first == "command" and len(tokens) >= 3 and tokens[1] == "-v":
         return []
@@ -128,13 +132,15 @@ def _parse_segment(
         return []
     if first == "find":
         if "|" in tokens:
-            if _find_pipeline_may_read_source(tokens):
+            if xargs_pipeline_may_read:
                 return [_unknown(segment, "unsupported pipeline")]
             return []
         if any(token in {"-exec", "-execdir"} for token in tokens):
             return [_unknown(segment, "unsupported find read shape")]
         return []
     if first in {"ls", "wc"}:
+        if xargs_pipeline_may_read:
+            return [_unknown(segment, "unsupported pipeline")]
         return []
 
     if "|" in tokens:
@@ -180,12 +186,14 @@ def _parse_pipeline(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedO
     ]
 
 
-def _find_pipeline_may_read_source(tokens: list[str]) -> bool:
-    pipe_index = tokens.index("|")
-    right = tokens[pipe_index + 1 :]
-    return "xargs" in {Path(token).name for token in right} and bool(
-        {"cat", "sed", "head", "tail", "awk"}.intersection(Path(token).name for token in right)
-    )
+def _xargs_pipeline_may_read_source(tokens: list[str]) -> bool:
+    for pipe_index, token in enumerate(tokens):
+        if token != "|":
+            continue
+        command_names = {Path(item).name for item in tokens[pipe_index + 1 :]}
+        if "xargs" in command_names and _XARGS_READ_COMMANDS.intersection(command_names):
+            return True
+    return False
 
 
 def _pipeline_source_file(tokens: list[str], *, cwd: Path, root: Path) -> str | None:

@@ -343,7 +343,7 @@ def _is_direct_read_tool(tool_name: object, tool_input: object) -> bool:
     )
     if any(marker in name_parts or marker in action_tokens for marker in write_markers):
         return False
-    read_markers = {"cat", "fetch", "get", "open", "read", "show", "view"}
+    read_markers = {"cat", "fetch", "open", "read", "show", "view"}
     return bool(read_markers.intersection(name_parts) or read_markers.intersection(action_tokens))
 
 

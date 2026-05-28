@@ -163,6 +163,28 @@ def test_find_pipeline_read_shape_is_unknown_not_ignored(tmp_path: Path) -> None
     assert observations[0].reason == "unsupported pipeline"
 
 
+def test_ls_xargs_read_pipeline_is_unknown_not_ignored(tmp_path: Path) -> None:
+    observations = parse_shell_command(
+        "ls *.py | xargs sed -n '1,2p'",
+        cwd=tmp_path,
+        root=tmp_path,
+    )
+
+    assert observations[0].kind == "unknown"
+    assert observations[0].reason == "unsupported pipeline"
+
+
+def test_printf_xargs_read_pipeline_is_unknown_not_ignored(tmp_path: Path) -> None:
+    observations = parse_shell_command(
+        "printf 'a.py\\n' | xargs sed -n '1,2p'",
+        cwd=tmp_path,
+        root=tmp_path,
+    )
+
+    assert observations[0].kind == "unknown"
+    assert observations[0].reason == "unsupported pipeline"
+
+
 def test_find_count_pipeline_is_ignored(tmp_path: Path) -> None:
     observations = parse_shell_command("find . -type f | wc -l", cwd=tmp_path, root=tmp_path)
 
