@@ -19,6 +19,7 @@ from .hooks import (
     uninstall_codex_hooks,
 )
 from .importers import import_agent_coverage
+from .models import CoverageEvent
 from .report import summary_text, unread_text, write_gcov, write_html, write_lcov
 from .storage import append_events, load_events, write_coverage_json
 
@@ -170,8 +171,8 @@ def _cmd_hook_stop(args: argparse.Namespace) -> int:
 def _cmd_report(args: argparse.Namespace) -> int:
     root, coverage = _coverage(args)
     if args.format == "json":
-        out = args.out or root / ".aicov" / "coverage.json"
-        path = write_coverage_json(coverage, root=root, path=_resolve_output(root, out))
+        out = _resolve_output(root, args.out) if args.out else None
+        path = write_coverage_json(coverage, root=root, path=out)
     elif args.format == "lcov":
         out = args.out or Path("aicov.info")
         path = write_lcov(coverage, out=_resolve_output(root, out), counts=args.counts)
@@ -212,14 +213,14 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
         session_id=args.session_id,
         transcript_path=args.path,
     )
-    count = append_events(events, root=root)
+    count = _append_events_by_root(events, fallback_root=root, dedupe=True)
     print(f"imported {count} event(s)")
     return 0
 
 
 def _cmd_import(args: argparse.Namespace) -> int:
     root, events = import_agent_coverage(args.path, cwd=_cwd(args))
-    count = append_events(events, root=root)
+    count = _append_events_by_root(events, fallback_root=root, dedupe=True)
     print(f"imported {count} event(s)")
     return 0
 
@@ -241,3 +242,13 @@ def _cwd(args: argparse.Namespace) -> Path:
 
 def _target(args: argparse.Namespace) -> str:
     return "repo" if getattr(args, "repo", False) else "user"
+
+
+def _append_events_by_root(
+    events: list[CoverageEvent], *, fallback_root: Path, dedupe: bool
+) -> int:
+    grouped: dict[Path, list[CoverageEvent]] = {}
+    for event in events:
+        root = Path(event.repo_root).resolve() if event.repo_root else fallback_root
+        grouped.setdefault(root, []).append(event)
+    return sum(append_events(group, root=root, dedupe=dedupe) for root, group in grouped.items())

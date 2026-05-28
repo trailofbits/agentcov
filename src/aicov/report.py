@@ -116,14 +116,11 @@ def _html_data(coverage: dict[str, Any], *, root: Path) -> dict[str, Any]:
 def _render_html(data: dict[str, Any]) -> str:
     json_data = json.dumps(data, separators=(",", ":"))
     escaped_json = json_data.replace("</", "<\\/")
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>aicov report</title>
-<style>
-:root {{
+    return HTML_TEMPLATE.replace("__AICOV_DATA__", escaped_json)
+
+
+HTML_STYLE = """
+:root {
   color-scheme: light;
   --bg: #f7f8fa;
   --panel: #ffffff;
@@ -134,61 +131,203 @@ def _render_html(data: dict[str, Any]) -> str:
   --search: #2d6cdf;
   --unread: #d64545;
   --accent: #7a4d00;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}}
-* {{ box-sizing: border-box; }}
-body {{ margin: 0; background: var(--bg); color: var(--text); }}
-header {{
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
-  position: sticky; top: 0; z-index: 2;
-}}
-h1 {{ font-size: 18px; margin: 0; font-weight: 700; }}
-button, select, input {{
-  border: 1px solid var(--border); background: #fff; color: var(--text); border-radius: 6px;
-  padding: 7px 9px; font: inherit;
-}}
-button.active {{ border-color: var(--search); box-shadow: inset 0 0 0 1px var(--search); }}
-.metrics {{ display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }}
-.layout {{ display: grid; grid-template-columns: minmax(260px, 360px) 1fr; min-height: calc(100vh - 61px); }}
-aside {{ border-right: 1px solid var(--border); background: var(--panel); overflow: auto; max-height: calc(100vh - 61px); }}
-main {{ overflow: auto; max-height: calc(100vh - 61px); }}
-.toolbar {{ display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }}
-.modes {{ display: flex; gap: 6px; flex-wrap: wrap; }}
-.file-list {{ display: grid; }}
-.file-row {{
-  display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
-  padding: 9px 12px; border-bottom: 1px solid #edf0f4; cursor: pointer;
-}}
-.file-row:hover, .file-row.selected {{ background: #eef4ff; }}
-.file-path {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }}
-.file-meta {{ color: var(--muted); font-size: 12px; white-space: nowrap; }}
-.unread-panel {{ padding: 12px; border-top: 1px solid var(--border); }}
-.unread-panel h2 {{ font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
-.unread-item {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; padding: 5px 0; overflow-wrap: anywhere; }}
-.source-head {{ padding: 12px 16px; border-bottom: 1px solid var(--border); background: #fff; position: sticky; top: 0; z-index: 1; }}
-.source-head strong {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-.source {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45; overflow-x: auto; }}
-.line {{
-  display: flex; min-width: 100%; border-bottom: 1px solid rgba(215,221,229,.45);
-}}
-.line-no {{ flex: 0 0 64px; padding: 0 10px; text-align: right; color: var(--muted); user-select: none; border-right: 1px solid rgba(215,221,229,.8); }}
-.line-code {{ flex: 1 0 auto; padding: 0 12px; white-space: pre; }}
-.line.read .line-code {{ background: rgba(27,154,107,.14); }}
-.line.unread .line-code {{ background: rgba(214,69,69,.09); }}
-.line.search-only .line-code {{ background: rgba(45,108,223,.12); }}
-.line:hover .line-code {{ outline: 1px solid rgba(45,108,223,.45); outline-offset: -1px; }}
-.inspector {{ padding: 12px 16px; border-top: 1px solid var(--border); background: #fff; color: var(--muted); }}
-.inspector code {{ color: var(--text); }}
-@media (max-width: 850px) {{
-  .layout {{ grid-template-columns: 1fr; }}
-  aside {{ max-height: 44vh; border-right: 0; border-bottom: 1px solid var(--border); }}
-  main {{ max-height: none; }}
-  header {{ align-items: flex-start; flex-direction: column; }}
-}}
-</style>
-</head>
-<body>
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+h1 {
+  font-size: 18px;
+  margin: 0;
+  font-weight: 700;
+}
+button,
+select,
+input {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font: inherit;
+}
+button.active {
+  border-color: var(--search);
+  box-shadow: inset 0 0 0 1px var(--search);
+}
+.metrics {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+.layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) 1fr;
+  min-height: calc(100vh - 61px);
+}
+aside {
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  overflow: auto;
+  max-height: calc(100vh - 61px);
+}
+main {
+  overflow: auto;
+  max-height: calc(100vh - 61px);
+}
+.toolbar {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.modes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.file-list {
+  display: grid;
+}
+.file-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border-bottom: 1px solid #edf0f4;
+  cursor: pointer;
+}
+.file-row:hover,
+.file-row.selected {
+  background: #eef4ff;
+}
+.file-path,
+.unread-item,
+.source-head strong,
+.source {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.file-path {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.file-meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.unread-panel {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.unread-panel h2 {
+  font-size: 13px;
+  margin: 0 0 8px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.unread-item {
+  font-size: 12px;
+  padding: 5px 0;
+  overflow-wrap: anywhere;
+}
+.source-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.source {
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-x: auto;
+}
+.line {
+  display: flex;
+  min-width: 100%;
+  border-bottom: 1px solid rgba(215, 221, 229, .45);
+}
+.line-no {
+  flex: 0 0 64px;
+  padding: 0 10px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+  border-right: 1px solid rgba(215, 221, 229, .8);
+}
+.line-code {
+  flex: 1 0 auto;
+  padding: 0 12px;
+  white-space: pre;
+}
+.line.read .line-code {
+  background: rgba(27, 154, 107, .14);
+}
+.line.unread .line-code {
+  background: rgba(214, 69, 69, .09);
+}
+.line.search-only .line-code {
+  background: rgba(45, 108, 223, .12);
+}
+.line:hover .line-code {
+  outline: 1px solid rgba(45, 108, 223, .45);
+  outline-offset: -1px;
+}
+.inspector {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: #fff;
+  color: var(--muted);
+}
+.inspector code {
+  color: var(--text);
+}
+@media (max-width: 850px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  aside {
+    max-height: 44vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  main {
+    max-height: none;
+  }
+  header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+""".strip()
+
+
+HTML_BODY = """
 <header>
   <div>
     <h1>aicov report</h1>
@@ -219,81 +358,111 @@ main {{ overflow: auto; max-height: calc(100vh - 61px); }}
     <div id="inspector" class="inspector">Line details appear here.</div>
   </main>
 </div>
-<script id="coverage-data" type="application/json">{escaped_json}</script>
-<script>
+<script id="coverage-data" type="application/json">__AICOV_DATA__</script>
+""".strip()
+
+
+HTML_SCRIPT = r"""
 const DATA = JSON.parse(document.getElementById('coverage-data').textContent);
 let selected = Object.keys(DATA.files).sort()[0] || null;
 let mode = 'coverage';
-const metrics = DATA.summary || {{}};
+const metrics = DATA.summary || {};
 document.getElementById('metrics').textContent =
-  `${{metrics.read_lines || 0}}/${{metrics.total_lines || 0}} lines read (${{metrics.read_percent || 0}}%) · ` +
-  `${{metrics.files || 0}} files · ${{metrics.unknown_events || 0}} unknown events`;
-const git = DATA.git || {{}};
-document.getElementById('git').textContent = [git.branch, git.head ? git.head.slice(0, 10) : null, git.dirty ? 'dirty' : null].filter(Boolean).join(' · ');
+  `${metrics.read_lines || 0}/${metrics.total_lines || 0} lines read ` +
+  `(${metrics.read_percent || 0}%) · ${metrics.files || 0} files · ` +
+  `${metrics.unknown_events || 0} unknown events`;
+const git = DATA.git || {};
+document.getElementById('git').textContent = [
+  git.branch,
+  git.head ? git.head.slice(0, 10) : null,
+  git.dirty ? 'dirty' : null,
+].filter(Boolean).join(' · ');
 
-document.querySelectorAll('[data-mode]').forEach(button => {{
-  button.addEventListener('click', () => {{
+document.querySelectorAll('[data-mode]').forEach(button => {
+  button.addEventListener('click', () => {
     mode = button.dataset.mode;
-    document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b === button));
+    document
+      .querySelectorAll('[data-mode]')
+      .forEach(item => item.classList.toggle('active', item === button));
     renderSource();
-  }});
-}});
+  });
+});
 document.getElementById('filter').addEventListener('input', renderFileList);
 
-function renderFileList() {{
+function renderFileList() {
   const query = document.getElementById('filter').value.toLowerCase();
   const container = document.getElementById('files');
   container.innerHTML = '';
-  Object.entries(DATA.files).sort(([a], [b]) => a.localeCompare(b)).forEach(([path, file]) => {{
-    if (query && !path.toLowerCase().includes(query)) return;
-    const row = document.createElement('div');
-    row.className = 'file-row' + (path === selected ? ' selected' : '');
-    row.innerHTML = `<div class="file-path">${{escapeHtml(path)}}</div><div class="file-meta">${{file.read_percent}}%</div>`;
-    row.addEventListener('click', () => {{ selected = path; renderFileList(); renderSource(); }});
-    container.appendChild(row);
-  }});
+  Object.entries(DATA.files).sort(([a], [b]) => a.localeCompare(b)).forEach(
+    ([path, file]) => {
+      if (query && !path.toLowerCase().includes(query)) return;
+      const row = document.createElement('div');
+      row.className = 'file-row' + (path === selected ? ' selected' : '');
+      row.innerHTML =
+        `<div class="file-path">${escapeHtml(path)}</div>` +
+        `<div class="file-meta">${file.read_percent}%</div>`;
+      row.addEventListener('click', () => {
+        selected = path;
+        renderFileList();
+        renderSource();
+      });
+      container.appendChild(row);
+    },
+  );
   renderUnread();
-}}
+}
 
-function renderUnread() {{
+function renderUnread() {
   const container = document.getElementById('unread');
   const rows = Object.entries(DATA.files)
-    .filter(([, f]) => f.line_count > f.read_lines)
+    .filter(([, file]) => file.line_count > file.read_lines)
     .sort(([a], [b]) => a.localeCompare(b))
     .slice(0, 80);
-  container.innerHTML = rows.map(([path, f]) => {{
-    const ranges = (f.unread_ranges || []).slice(0, 4).map(r => r.start === r.end ? r.start : `${{r.start}}-${{r.end}}`).join(', ');
-    return `<div class="unread-item">${{escapeHtml(path)}}: ${{ranges}}</div>`;
-  }}).join('') || '<div class="unread-item">No unread tracked lines.</div>';
-}}
+  container.innerHTML = rows.map(([path, file]) => {
+    const ranges = (file.unread_ranges || [])
+      .slice(0, 4)
+      .map(range => range.start === range.end ? range.start : `${range.start}-${range.end}`)
+      .join(', ');
+    return `<div class="unread-item">${escapeHtml(path)}: ${ranges}</div>`;
+  }).join('') || '<div class="unread-item">No unread tracked lines.</div>';
+}
 
-function renderSource() {{
+function renderSource() {
   const file = DATA.files[selected];
   const head = document.getElementById('source-head');
   const source = document.getElementById('source');
-  if (!file) {{ head.textContent = 'Select a file'; source.innerHTML = ''; return; }}
-  head.innerHTML = `<strong>${{escapeHtml(selected)}}</strong> · ${{file.read_lines}}/${{file.line_count}} read · ${{file.search_seen_lines}} search-seen`;
+  if (!file) {
+    head.textContent = 'Select a file';
+    source.innerHTML = '';
+    return;
+  }
+  head.innerHTML =
+    `<strong>${escapeHtml(selected)}</strong> · ` +
+    `${file.read_lines}/${file.line_count} read · ` +
+    `${file.search_seen_lines} search-seen`;
   source.innerHTML = '';
-  const lineStats = file.lines || {{}};
+  const lineStats = file.lines || {};
   const lines = file.source || [];
-  for (let i = 1; i <= file.line_count; i++) {{
-    const stats = lineStats[String(i)] || {{}};
+  for (let i = 1; i <= file.line_count; i++) {
+    const stats = lineStats[String(i)] || {};
     const row = document.createElement('div');
     row.className = 'line ' + lineClass(stats);
     row.style.background = heatBackground(stats);
-    row.innerHTML = `<div class="line-no">${{i}}</div><div class="line-code">${{escapeHtml(lines[i - 1] || '')}}</div>`;
+    row.innerHTML =
+      `<div class="line-no">${i}</div>` +
+      `<div class="line-code">${escapeHtml(lines[i - 1] || '')}</div>`;
     row.addEventListener('click', () => inspectLine(i, stats));
     source.appendChild(row);
-  }}
-}}
+  }
+}
 
-function lineClass(stats) {{
+function lineClass(stats) {
   if ((stats.read_count || 0) > 0) return 'read';
   if ((stats.search_seen_count || 0) > 0) return 'search-only';
   return 'unread';
-}}
+}
 
-function heatBackground(stats) {{
+function heatBackground(stats) {
   if (mode === 'coverage') return '';
   let value = 0;
   if (mode === 'frequency') value = Math.min(0.35, (stats.read_count || 0) * 0.06);
@@ -301,23 +470,51 @@ function heatBackground(stats) {{
   if (mode === 'attention') value = Math.min(0.35, (stats.attention_score || 0) * 0.06);
   if (!value) return '';
   const color = mode === 'search' ? '45,108,223' : '27,154,107';
-  return `rgba(${{color}}, ${{value}})`;
-}}
+  return `rgba(${color}, ${value})`;
+}
 
-function inspectLine(line, stats) {{
-  const commands = (stats.commands || []).map(c => `<div><code>${{escapeHtml(c)}}</code></div>`).join('');
+function inspectLine(line, stats) {
+  const commands = (stats.commands || [])
+    .map(command => `<div><code>${escapeHtml(command)}</code></div>`)
+    .join('');
   document.getElementById('inspector').innerHTML =
-    `<strong>${{escapeHtml(selected)}}:${{line}}</strong> · read ${{stats.read_count || 0}} · ` +
-    `search-seen ${{stats.search_seen_count || 0}} · attention ${{stats.attention_score || 0}}` +
-    (commands ? `<div style="margin-top:8px">${{commands}}</div>` : '');
-}}
+    `<strong>${escapeHtml(selected)}:${line}</strong> · ` +
+    `read ${stats.read_count || 0} · ` +
+    `search-seen ${stats.search_seen_count || 0} · ` +
+    `attention ${stats.attention_score || 0}` +
+    (commands ? `<div style="margin-top:8px">${commands}</div>` : '');
+}
 
-function escapeHtml(value) {{
-  return String(value).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
-}}
+function escapeHtml(value) {
+  const replacements = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  };
+  return String(value).replace(/[&<>"']/g, char => replacements[char]);
+}
 
 renderFileList();
 renderSource();
+""".strip()
+
+
+HTML_TEMPLATE = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aicov report</title>
+<style>
+{HTML_STYLE}
+</style>
+</head>
+<body>
+{HTML_BODY}
+<script>
+{HTML_SCRIPT}
 </script>
 </body>
 </html>

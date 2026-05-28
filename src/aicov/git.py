@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
@@ -45,7 +46,7 @@ def git_metadata(root: Path) -> dict[str, object]:
 def list_project_files(root: Path, config: AicovConfig) -> list[str]:
     tracked = _git_tracked_files(root)
     if tracked is None:
-        tracked = _filesystem_files(root)
+        tracked = _filesystem_files(root, config)
     files = []
     for rel in tracked:
         if is_excluded(rel, config):
@@ -63,14 +64,22 @@ def _git_tracked_files(root: Path) -> list[str] | None:
     return [item for item in out.split("\0") if item]
 
 
-def _filesystem_files(root: Path) -> list[str]:
+def _filesystem_files(root: Path, config: AicovConfig) -> list[str]:
     files: list[str] = []
-    for path in root.rglob("*"):
-        if path.is_file():
-            try:
-                files.append(path.relative_to(root).as_posix())
-            except ValueError:
-                continue
+    for current, dirs, filenames in os.walk(root):
+        current_path = Path(current)
+        try:
+            rel_dir = current_path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        rel_prefix = "" if rel_dir == "." else f"{rel_dir}/"
+        dirs[:] = [
+            dirname for dirname in dirs if not is_excluded(f"{rel_prefix}{dirname}/", config)
+        ]
+        for filename in filenames:
+            rel = f"{rel_prefix}{filename}"
+            if not is_excluded(rel, config):
+                files.append(rel)
     return files
 
 

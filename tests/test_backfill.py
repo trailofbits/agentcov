@@ -6,6 +6,10 @@ from pathlib import Path
 from aicov.backfill import backfill_claude_session, backfill_codex_session, backfill_session
 
 
+def _write_jsonl(path: Path, *records: dict[str, object]) -> None:
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+
+
 def test_backfill_reads_codex_response_item_payload_function_call(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
     transcript = tmp_path / "session.jsonl"
@@ -779,6 +783,55 @@ def test_backfill_caps_claude_partial_read_from_tab_numbered_result(tmp_path: Pa
         )
         + "\n",
         encoding="utf-8",
+    )
+
+    _, events = backfill_claude_session(transcript_path=transcript)
+
+    assert len(events) == 1
+    assert events[0].file == "app.py"
+    assert [(r.start, r.end) for r in events[0].ranges] == [(2, 3)]
+
+
+def test_backfill_uses_successful_bounded_claude_read_input_when_result_is_plain(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(
+        transcript,
+        {
+            "type": "assistant",
+            "uuid": "turn-1",
+            "sessionId": "sess",
+            "cwd": str(tmp_path),
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Read",
+                        "input": {
+                            "file_path": str(tmp_path / "app.py"),
+                            "offset": 2,
+                            "limit": 2,
+                        },
+                    }
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "parentUuid": "turn-1",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": "two\nthree",
+                    }
+                ]
+            },
+        },
     )
 
     _, events = backfill_claude_session(transcript_path=transcript)

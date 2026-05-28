@@ -29,9 +29,6 @@ extend-exclude = ["agent-coverage"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
-[tool.ruff.lint.per-file-ignores]
-"src/aicov/report.py" = ["E501"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

@@ -1,5 +1,21 @@
 # aicov Plan
 
+## Implementation Status
+
+This document is the design plan for the MVP. The current implementation ships
+the standalone Python CLI, Codex hook install/uninstall, Codex and Claude Code
+backfill, deterministic shell parsing for the supported MVP commands, LCOV,
+textual gcov, JSON, single-file HTML, import of `agent-coverage`-style JSON, and
+git-tracked inventory reporting.
+
+Still planned after the release cut:
+
+- richer task/subagent filtering in the HTML report,
+- recency-specific heatmap mode,
+- optional user-level cross-repo storage,
+- additional agent transcript formats,
+- opt-in inferred range repair for unsupported command shapes.
+
 ## Goal
 
 Build a gcov/lcov-compatible coverage tool for AI coding agents. Instead of
@@ -38,7 +54,7 @@ Initial product direction:
 - Store git revision and dirty-state metadata with generated reports because
   line numbers drift.
 - Avoid storing raw tool outputs by default. Store only commands, ranges, and
-  metadata unless debug capture is explicitly enabled.
+  metadata; add explicit debug capture later only if there is a clear need.
 - Prioritize LCOV output first, custom HTML second, and textual `.gcov` third.
 - Generate custom HTML as a self-contained static file for easy sharing. Split
   CSS/JS later only if the artifact becomes unwieldy.

@@ -76,6 +76,21 @@ def test_read_like_mcp_path_payload_is_counted_as_read(tmp_path: Path) -> None:
     assert [(r.start, r.end) for r in events[0].ranges] == [(2, 3)]
 
 
+def test_path_payload_without_read_tool_marker_is_not_counted(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    payload = {
+        "tool_name": "mcp__filesystem__stat",
+        "tool_input": {
+            "path": "app.py",
+            "cwd": str(tmp_path),
+        },
+    }
+
+    _, events = events_from_payload(payload)
+
+    assert events == []
+
+
 def test_install_and_uninstall_repo_hooks_preserves_unrelated_hooks(tmp_path: Path) -> None:
     hooks_path = tmp_path / ".codex" / "hooks.json"
     hooks_path.parent.mkdir()

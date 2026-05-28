@@ -29,7 +29,6 @@ class AicovConfig:
     exclude: tuple[str, ...] = field(default_factory=lambda: tuple(DEFAULT_EXCLUDES))
     include_lockfiles: bool = True
     auto_reports: tuple[str, ...] = ("json",)
-    debug_capture: bool = False
 
 
 def load_config(root: Path | str | None = None) -> AicovConfig:
@@ -46,7 +45,6 @@ def load_config(root: Path | str | None = None) -> AicovConfig:
         exclude=tuple(str(item) for item in excludes),
         include_lockfiles=bool(section.get("include_lockfiles", True)),
         auto_reports=tuple(str(item) for item in auto_reports),
-        debug_capture=bool(section.get("debug_capture", False)),
     )
 
 

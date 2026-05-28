@@ -9,7 +9,7 @@ def normalize_file_path(raw: str, cwd: Path, root: Path) -> str | None:
     candidate = raw.strip().strip("'\"")
     if not candidate or candidate.startswith(("http://", "https://")):
         return None
-    path = Path(candidate)
+    path = Path(candidate).expanduser()
     if not path.is_absolute():
         path = (cwd / path).resolve()
     try:

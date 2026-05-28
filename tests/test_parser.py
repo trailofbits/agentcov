@@ -139,3 +139,37 @@ def test_ambiguous_command_is_unknown(tmp_path: Path) -> None:
 
     assert observations[0].kind == "unknown"
     assert observations[0].confidence == "unknown"
+
+
+def test_find_exec_read_shape_is_unknown_not_ignored(tmp_path: Path) -> None:
+    observations = parse_shell_command(
+        "find . -name '*.py' -exec sed -n '1,2p' {} ';'",
+        cwd=tmp_path,
+        root=tmp_path,
+    )
+
+    assert observations[0].kind == "unknown"
+    assert observations[0].reason == "unsupported find read shape"
+
+
+def test_find_pipeline_read_shape_is_unknown_not_ignored(tmp_path: Path) -> None:
+    observations = parse_shell_command(
+        "find . -name '*.py' | xargs sed -n '1,2p'",
+        cwd=tmp_path,
+        root=tmp_path,
+    )
+
+    assert observations[0].kind == "unknown"
+    assert observations[0].reason == "unsupported pipeline"
+
+
+def test_find_count_pipeline_is_ignored(tmp_path: Path) -> None:
+    observations = parse_shell_command("find . -type f | wc -l", cwd=tmp_path, root=tmp_path)
+
+    assert observations == []
+
+
+def test_echo_sed_pipeline_is_ignored(tmp_path: Path) -> None:
+    observations = parse_shell_command("echo foo | sed -n '1p'", cwd=tmp_path, root=tmp_path)
+
+    assert observations == []

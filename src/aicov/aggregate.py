@@ -6,7 +6,7 @@ from typing import Any
 
 from .config import AicovConfig, is_excluded, load_config
 from .git import file_line_count, git_metadata, inventory_hash, list_project_files
-from .models import CoverageEvent
+from .models import Confidence, CoverageEvent, LineRange
 from .paths import display_command
 
 
@@ -143,13 +143,9 @@ def build_coverage(
                 _event_summary(event, reason="file is missing, unreadable, or empty")
             )
             continue
-        for line_range in event.ranges:
-            normalized = line_range.normalized()
-            start = max(1, normalized.start)
+        for normalized in _merged_bounded_ranges(event.ranges, file_cov.line_count):
+            start = normalized.start
             end = normalized.end
-            end = min(end, file_cov.line_count)
-            if end < start:
-                continue
             range_summary = {
                 "start": start,
                 "end": end,
@@ -240,7 +236,8 @@ def _apply_event_to_line(stats: LineStats, event: CoverageEvent, *, weight: floa
         stats.search_seen_count += 1
     else:
         stats.read_count += 1
-        stats.unique_read_count += 1
+        if event.event_id not in stats.events:
+            stats.unique_read_count += 1
         stats.attention_score += weight
         if stats.first_read_at is None or event.timestamp < stats.first_read_at:
             stats.first_read_at = event.timestamp
@@ -255,6 +252,42 @@ def _apply_event_to_line(stats: LineStats, event: CoverageEvent, *, weight: floa
         stats.confidence = "unknown"
     elif event.confidence == "low" and stats.confidence == "exact":
         stats.confidence = "low"
+
+
+def _merged_bounded_ranges(ranges: list[LineRange], line_count: int) -> list[LineRange]:
+    bounded: list[tuple[int, int, Confidence, float]] = []
+    for line_range in ranges:
+        normalized = line_range.normalized()
+        start = max(1, normalized.start)
+        end = min(normalized.end, line_count)
+        if end >= start:
+            bounded.append((start, end, normalized.confidence, normalized.weight))
+    if not bounded:
+        return []
+
+    bounded.sort(key=lambda item: (item[0], item[1]))
+    merged = [bounded[0]]
+    for start, end, confidence, weight in bounded[1:]:
+        last_start, last_end, last_confidence, last_weight = merged[-1]
+        if start <= last_end + 1:
+            merged[-1] = (
+                last_start,
+                max(last_end, end),
+                _least_confident(last_confidence, confidence),
+                max(last_weight, weight),
+            )
+        else:
+            merged.append((start, end, confidence, weight))
+
+    return [
+        LineRange(start=start, end=end, confidence=confidence, weight=weight)
+        for start, end, confidence, weight in merged
+    ]
+
+
+def _least_confident(left: Confidence, right: Confidence) -> Confidence:
+    order = {"exact": 0, "inferred": 1, "low": 2, "unknown": 3}
+    return left if order.get(left, 0) >= order.get(right, 0) else right
 
 
 def _event_summary(event: CoverageEvent, *, reason: str | None = None) -> dict[str, Any]:

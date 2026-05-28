@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from .aggregate import build_coverage
-from .config import load_config
+from .config import AicovConfig, load_config
 from .git import find_repo_root
 from .models import CoverageEvent, ParsedObservation, now_iso
 from .parser import parse_direct_tool_input, parse_shell_command
-from .storage import append_events, load_events, write_coverage_json
+from .storage import append_events, load_events, storage_dir, write_coverage_json
 
 AICOV_HOOK_COMMANDS = {
     "aicov hook post-tool-use",
@@ -22,8 +23,8 @@ AICOV_HOOK_COMMANDS = {
 }
 
 
-def read_hook_payload(stdin: object = sys.stdin) -> dict[str, Any]:
-    raw = stdin.read()
+def read_hook_payload(stdin: TextIO | None = None) -> dict[str, Any]:
+    raw = (stdin or sys.stdin).read()
     if not raw.strip():
         return {}
     data = json.loads(raw)
@@ -94,7 +95,9 @@ def run_stop(payload: dict[str, Any] | None = None) -> Path:
     cfg = load_config(root)
     events = load_events(root=root, config=cfg)
     coverage = build_coverage(root=root, events=events, config=cfg)
-    return write_coverage_json(coverage, root=root, config=cfg)
+    coverage_file = write_coverage_json(coverage, root=root, config=cfg)
+    _write_auto_reports(coverage, root=root, config=cfg)
+    return coverage_file
 
 
 def codex_hooks_config() -> dict[str, Any]:
@@ -174,6 +177,26 @@ def uninstall_codex_hooks(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(updated, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path, updated, changed
+
+
+def _write_auto_reports(coverage: dict[str, Any], *, root: Path, config: AicovConfig) -> None:
+    enabled = {name.lower() for name in config.auto_reports}
+    if not enabled:
+        return
+
+    reports_dir = storage_dir(root, config) / "reports"
+    if "lcov" in enabled:
+        from .report import write_lcov
+
+        write_lcov(coverage, out=reports_dir / "aicov.info")
+    if "gcov" in enabled:
+        from .report import write_gcov
+
+        write_gcov(coverage, root=root, out_dir=reports_dir / "gcov")
+    if "html" in enabled:
+        from .report import write_html
+
+        write_html(coverage, root=root, out=reports_dir / "aicov.html")
 
 
 def _merge_hooks(existing: dict[str, Any], addition: dict[str, Any]) -> dict[str, Any]:
@@ -292,13 +315,16 @@ def _payload_command(tool_input: object) -> str | None:
 
 
 def _is_direct_read_tool(tool_name: object, tool_input: object) -> bool:
+    if not isinstance(tool_input, dict) or not _has_path_input(tool_input):
+        return False
     name = str(tool_name or "").lower()
-    action = ""
-    if isinstance(tool_input, dict):
-        action = " ".join(
-            str(tool_input.get(key, "")).lower() for key in ("action", "operation", "op", "mode")
-        )
-    haystack = f"{name} {action}"
+    action_parts = [
+        str(tool_input.get(key, "")).lower() for key in ("action", "operation", "op", "mode")
+    ]
+    name_parts = [part for part in re.split(r"[^a-z0-9]+", name) if part]
+    action_tokens = {
+        token for action in action_parts for token in re.split(r"[^a-z0-9]+", action) if token
+    }
     write_markers = (
         "apply",
         "copy",
@@ -315,10 +341,18 @@ def _is_direct_read_tool(tool_name: object, tool_input: object) -> bool:
         "update",
         "write",
     )
-    if any(marker in haystack for marker in write_markers):
+    if any(marker in name_parts or marker in action_tokens for marker in write_markers):
         return False
-    read_markers = ("cat", "fetch", "get", "open", "read", "show", "view")
-    return any(marker in haystack for marker in read_markers)
+    read_markers = {"cat", "fetch", "get", "open", "read", "show", "view"}
+    return bool(read_markers.intersection(name_parts) or read_markers.intersection(action_tokens))
+
+
+def _has_path_input(tool_input: dict[str, Any]) -> bool:
+    path_keys = ("path", "file", "file_path", "filename")
+    if any(isinstance(tool_input.get(key), str) for key in path_keys):
+        return True
+    files = tool_input.get("files")
+    return isinstance(files, list) and any(isinstance(item, str) for item in files)
 
 
 def _event_from_observation(

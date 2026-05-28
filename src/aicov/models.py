@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 CoverageKind = Literal["read", "search_seen", "unknown"]
 Confidence = Literal["exact", "inferred", "low", "unknown"]
+VALID_COVERAGE_KINDS = frozenset({"read", "search_seen", "unknown"})
+VALID_CONFIDENCES = frozenset({"exact", "inferred", "low", "unknown"})
 
 
 def now_iso() -> str:
@@ -65,15 +67,9 @@ class CoverageEvent:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> CoverageEvent:
-        ranges = [
-            LineRange(
-                start=int(item["start"]),
-                end=int(item["end"]),
-                confidence=item.get("confidence", "exact"),
-                weight=float(item.get("weight", data.get("weight", 1.0))),
-            ).normalized()
-            for item in data.get("ranges", [])
-        ]
+        kind = _coverage_kind(data.get("kind", "read"))
+        confidence = _confidence(data.get("confidence", "exact"))
+        ranges = _ranges_from_json(data.get("ranges", []), default_weight=data.get("weight", 1.0))
         return cls(
             event_id=data.get("event_id") or uuid4().hex,
             schema_version=int(data.get("schema_version", 1)),
@@ -89,9 +85,47 @@ class CoverageEvent:
             command=data.get("command"),
             file=data.get("file"),
             ranges=ranges,
-            kind=data.get("kind", "read"),
-            confidence=data.get("confidence", "exact"),
+            kind=kind,
+            confidence=confidence,
             weight=float(data.get("weight", 1.0)),
-            task_path=list(data.get("task_path") or []),
+            task_path=_string_list(data.get("task_path")),
             reason=data.get("reason"),
         )
+
+
+def _coverage_kind(value: object) -> CoverageKind:
+    if value not in VALID_COVERAGE_KINDS:
+        raise ValueError(f"invalid coverage kind: {value!r}")
+    return cast(CoverageKind, value)
+
+
+def _confidence(value: object) -> Confidence:
+    if value not in VALID_CONFIDENCES:
+        raise ValueError(f"invalid confidence: {value!r}")
+    return cast(Confidence, value)
+
+
+def _ranges_from_json(value: object, *, default_weight: object) -> list[LineRange]:
+    if not isinstance(value, list):
+        raise ValueError("ranges must be a list")
+    ranges: list[LineRange] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"invalid range item: {item!r}")
+        ranges.append(
+            LineRange(
+                start=int(item["start"]),
+                end=int(item["end"]),
+                confidence=_confidence(item.get("confidence", "exact")),
+                weight=float(item.get("weight", default_weight)),
+            ).normalized()
+        )
+    return ranges
+
+
+def _string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("task_path must be a list")
+    return [str(item) for item in value]

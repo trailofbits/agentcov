@@ -4,10 +4,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from aicov.aggregate import build_coverage
+from aicov.cli import _append_events_by_root
 from aicov.config import load_config
+from aicov.importers import import_agent_coverage
 from aicov.models import CoverageEvent, LineRange
 from aicov.report import unread_text, write_gcov, write_lcov
+from aicov.storage import append_events, load_events
 
 
 def _git(command: list[str], cwd: Path) -> None:
@@ -65,6 +70,20 @@ def test_gcov_and_unread_output(tmp_path: Path) -> None:
     assert "    #####:    1:one" in gcov
     assert "        1:    2:two" in gcov
     assert "a.py: 1/3 unread" in unread_text(coverage)
+
+
+def test_overlapping_ranges_from_one_event_count_once(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    event = CoverageEvent(
+        file="a.py",
+        ranges=[LineRange(1, 3), LineRange(2, 4)],
+    )
+
+    coverage = build_coverage(root=tmp_path, config=load_config(tmp_path), events=[event])
+
+    lines = coverage["files"]["a.py"]["lines"]
+    assert [lines[str(line)]["read_count"] for line in range(1, 5)] == [1, 1, 1, 1]
+    assert [lines[str(line)]["unique_read_count"] for line in range(1, 5)] == [1, 1, 1, 1]
 
 
 def test_fallback_inventory_excludes_aicov_storage(tmp_path: Path) -> None:
@@ -180,3 +199,124 @@ def test_json_report_out_is_resolved_against_root(tmp_path: Path) -> None:
     assert completed.stdout.strip() == str(repo / "coverage.json")
     assert (repo / "coverage.json").exists()
     assert not (caller / "coverage.json").exists()
+
+
+def test_json_report_default_uses_configured_storage_dir(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("one\n", encoding="utf-8")
+    (repo / ".aicov.toml").write_text('storage_dir = ".custom-aicov"\n', encoding="utf-8")
+    _git(["init"], repo)
+    _git(["add", "a.py", ".aicov.toml"], repo)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "aicov", "--root", str(repo), "report", "--format", "json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.stdout.strip() == str(repo / ".custom-aicov" / "coverage.json")
+    assert (repo / ".custom-aicov" / "coverage.json").exists()
+
+
+def test_append_events_can_dedupe_backfilled_events(tmp_path: Path) -> None:
+    first = CoverageEvent(
+        session_id="sess",
+        turn_id="turn",
+        tool_use_id="tool",
+        source="transcript-backfill",
+        tool_name="Bash",
+        command="sed -n '1,1p' a.py",
+        file="a.py",
+        ranges=[LineRange(1, 1)],
+    )
+    second = CoverageEvent.from_json({**first.to_json(), "event_id": "different"})
+
+    assert append_events([first], root=tmp_path, dedupe=True) == 1
+    assert append_events([second], root=tmp_path, dedupe=True) == 0
+    assert len(load_events(root=tmp_path)) == 1
+
+
+def test_append_events_keeps_duplicate_live_events_without_dedupe(tmp_path: Path) -> None:
+    event = CoverageEvent(
+        session_id="sess",
+        turn_id="turn",
+        tool_use_id="tool",
+        source="codex-post-tool-use",
+        file="a.py",
+        ranges=[LineRange(1, 1)],
+    )
+    duplicate = CoverageEvent.from_json({**event.to_json(), "event_id": "different"})
+
+    assert append_events([event, duplicate], root=tmp_path, dedupe=False) == 2
+    assert len(load_events(root=tmp_path)) == 2
+
+
+def test_load_events_rejects_invalid_kind(tmp_path: Path) -> None:
+    event_dir = tmp_path / ".aicov"
+    event_dir.mkdir()
+    (event_dir / "events.jsonl").write_text('{"kind":"bogus","ranges":[]}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid coverage kind"):
+        load_events(root=tmp_path)
+
+
+def test_append_events_by_root_writes_each_repo_store(tmp_path: Path) -> None:
+    one = tmp_path / "one"
+    two = tmp_path / "two"
+    one.mkdir()
+    two.mkdir()
+    events = [
+        CoverageEvent(repo_root=str(one), file="a.py", ranges=[LineRange(1, 1)]),
+        CoverageEvent(repo_root=str(two), file="b.py", ranges=[LineRange(1, 1)]),
+    ]
+
+    assert _append_events_by_root(events, fallback_root=tmp_path, dedupe=True) == 2
+
+    assert len(load_events(root=one)) == 1
+    assert len(load_events(root=two)) == 1
+
+
+def test_import_agent_coverage_simple_array(tmp_path: Path) -> None:
+    payload = tmp_path / "agent-coverage.json"
+    payload.write_text(
+        '[{"cmd":"sed -n 1,2p app.py","ranges":["app.py:1:2"]}]',
+        encoding="utf-8",
+    )
+
+    root, events = import_agent_coverage(payload, cwd=tmp_path)
+
+    assert root == tmp_path
+    assert len(events) == 1
+    assert events[0].file == "app.py"
+    assert [(item.start, item.end) for item in events[0].ranges] == [(1, 2)]
+
+
+def test_import_agent_coverage_hierarchical_tasks(tmp_path: Path) -> None:
+    payload = tmp_path / "agent-coverage.json"
+    payload.write_text(
+        """
+        {
+          "tasks": [
+            {
+              "prompt": "review",
+              "coverage": [{"ranges": ["src/app.py:3:4"]}],
+              "children": [
+                {
+                  "kind": "subagent",
+                  "coverage": [{"ranges": ["src/lib.py:1:1"]}]
+                }
+              ]
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    _, events = import_agent_coverage(payload, cwd=tmp_path)
+
+    assert [event.file for event in events] == ["src/app.py", "src/lib.py"]
+    assert events[0].task_path == ["review"]
+    assert events[1].task_path == ["review", "subagent"]

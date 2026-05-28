@@ -8,15 +8,16 @@ from pathlib import Path
 from typing import Any
 
 from .hooks import events_from_payload
+from .models import CoverageEvent
 
 
 def backfill_codex_session(
     *,
     session_id: str | None = None,
     transcript_path: Path | None = None,
-) -> tuple[Path, list[Any]]:
+) -> tuple[Path, list[CoverageEvent]]:
     path = transcript_path or _find_codex_session(session_id)
-    events = []
+    events: list[CoverageEvent] = []
     seen: set[tuple[object, ...]] = set()
     root = Path.cwd().resolve()
     for record in _read_jsonl(path):
@@ -30,13 +31,13 @@ def backfill_claude_session(
     *,
     session_id: str | None = None,
     transcript_path: Path | None = None,
-) -> tuple[Path, list[Any]]:
+) -> tuple[Path, list[CoverageEvent]]:
     paths = (
         _claude_session_paths_from_transcript(transcript_path)
         if transcript_path
         else _find_claude_session_paths(session_id)
     )
-    events = []
+    events: list[CoverageEvent] = []
     seen: set[tuple[object, ...]] = set()
     root = Path.cwd().resolve()
     for path in paths:
@@ -56,7 +57,7 @@ def backfill_session(
     agent: str,
     session_id: str | None = None,
     transcript_path: Path | None = None,
-) -> tuple[Path, list[Any]]:
+) -> tuple[Path, list[CoverageEvent]]:
     selected = (
         _infer_agent(session_id=session_id, transcript_path=transcript_path)
         if agent == "auto"
@@ -126,7 +127,9 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _extend_new_events(
-    events: list[Any], parsed_events: list[Any], seen: set[tuple[object, ...]]
+    events: list[CoverageEvent],
+    parsed_events: list[CoverageEvent],
+    seen: set[tuple[object, ...]],
 ) -> None:
     for event in parsed_events:
         key = _event_key(event)
@@ -136,7 +139,7 @@ def _extend_new_events(
         events.append(event)
 
 
-def _event_key(event: Any) -> tuple[object, ...]:
+def _event_key(event: CoverageEvent) -> tuple[object, ...]:
     ranges = tuple(
         (
             item.start,
@@ -337,7 +340,7 @@ def _cap_claude_read_input(
         return None
     bounds = _claude_read_result_bounds(result.value)
     if bounds is None:
-        return None
+        return tool_input if _has_bounded_read_input(tool_input) else None
     start, end = bounds
     if end < start:
         return tool_input
@@ -350,6 +353,10 @@ def _cap_claude_read_input(
     if file_path:
         normalized.setdefault("file_path", file_path)
     return normalized
+
+
+def _has_bounded_read_input(tool_input: dict[str, Any]) -> bool:
+    return any(tool_input.get(key) is not None for key in ("end_line", "line_end", "limit"))
 
 
 def _normalize_claude_grep_response(payload: dict[str, Any], result: object) -> object:

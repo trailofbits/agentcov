@@ -126,7 +126,15 @@ def _parse_segment(
         return []
     if first == "git" and len(tokens) >= 2 and tokens[1] in {"status", "rev-parse", "branch"}:
         return []
-    if first in {"ls", "find", "wc"}:
+    if first == "find":
+        if "|" in tokens:
+            if _find_pipeline_may_read_source(tokens):
+                return [_unknown(segment, "unsupported pipeline")]
+            return []
+        if any(token in {"-exec", "-execdir"} for token in tokens):
+            return [_unknown(segment, "unsupported find read shape")]
+        return []
+    if first in {"ls", "wc"}:
         return []
 
     if "|" in tokens:
@@ -170,6 +178,14 @@ def _parse_pipeline(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedO
             weight=READ_WEIGHTS["focused"],
         )
     ]
+
+
+def _find_pipeline_may_read_source(tokens: list[str]) -> bool:
+    pipe_index = tokens.index("|")
+    right = tokens[pipe_index + 1 :]
+    return "xargs" in {Path(token).name for token in right} and bool(
+        {"cat", "sed", "head", "tail", "awk"}.intersection(Path(token).name for token in right)
+    )
 
 
 def _pipeline_source_file(tokens: list[str], *, cwd: Path, root: Path) -> str | None:

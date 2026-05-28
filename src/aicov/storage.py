@@ -30,14 +30,24 @@ def append_events(
     *,
     root: Path | None = None,
     config: AicovConfig | None = None,
+    dedupe: bool = False,
 ) -> int:
     repo_root = root or find_repo_root()
     cfg = config or load_config(repo_root)
     path = events_path(repo_root, cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if dedupe:
+        seen = {_event_identity(event) for event in load_events(root=repo_root, config=cfg)}
+    else:
+        seen = set()
     count = 0
     with path.open("a", encoding="utf-8") as file:
         for event in events:
+            if dedupe:
+                key = _event_identity(event)
+                if key in seen:
+                    continue
+                seen.add(key)
             file.write(json.dumps(event.to_json(), sort_keys=True, separators=(",", ":")))
             file.write("\n")
             count += 1
@@ -82,3 +92,23 @@ def write_coverage_json(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(coverage, indent=2, sort_keys=True), encoding="utf-8")
     return out
+
+
+def _event_identity(event: CoverageEvent) -> tuple[object, ...]:
+    ranges = tuple((item.start, item.end, item.confidence, item.weight) for item in event.ranges)
+    return (
+        event.schema_version,
+        event.session_id,
+        event.turn_id,
+        event.tool_use_id,
+        event.agent,
+        event.source,
+        event.tool_name,
+        event.command,
+        event.file,
+        ranges,
+        event.kind,
+        event.confidence,
+        event.reason,
+        tuple(event.task_path),
+    )
