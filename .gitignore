@@ -1,0 +1,15 @@
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+agent-coverage/
+aicov.info
+.aicov/events.jsonl
+.aicov/coverage.json
+.aicov/reports/
+.aicov/raw/
+.aicov/tmp/

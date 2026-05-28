@@ -1,0 +1,37 @@
+[project]
+name = "aicov"
+version = "0.1.0"
+description = "AI-agent read coverage for source files, with LCOV and gcov-compatible reports."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "aicov contributors" }]
+dependencies = []
+
+[project.scripts]
+aicov = "aicov.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.11.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["agent-coverage"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/aicov/report.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
