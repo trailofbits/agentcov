@@ -323,20 +323,25 @@ def _parse_search_output(
     text = _response_text(tool_response)
     if not text:
         return []
-    by_file: dict[str, set[int]] = {}
+    by_file: dict[str, dict[int, float]] = {}
     for line in text.splitlines():
-        match = re.match(r"^(.+?)(?::|-)(\d+)(?::|-)", line)
+        match = re.match(r"^(.+?)(?::|-)(\d+)(?P<trailing>[:\-])", line)
         if not match:
             continue
         rel = normalize_file_path(match.group(1), cwd, root)
         if not rel:
             continue
-        by_file.setdefault(rel, set()).add(int(match.group(2)))
+        line_number = int(match.group(2))
+        weight = (
+            READ_WEIGHTS["search_context"]
+            if match.group("trailing") == "-"
+            else READ_WEIGHTS["search_hit"]
+        )
+        previous = by_file.setdefault(rel, {}).get(line_number, 0.0)
+        by_file[rel][line_number] = max(previous, weight)
     observations = []
     for rel, lines in sorted(by_file.items()):
-        ranges = [
-            LineRange(line, line, "exact", READ_WEIGHTS["search_hit"]) for line in sorted(lines)
-        ]
+        ranges = [LineRange(line, line, "exact", weight) for line, weight in sorted(lines.items())]
         observations.append(
             ParsedObservation(
                 file=rel,

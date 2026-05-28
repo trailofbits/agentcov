@@ -108,6 +108,7 @@ def _html_data(coverage: dict[str, Any], *, root: Path) -> dict[str, Any]:
     return {
         "summary": coverage.get("summary", {}),
         "git": coverage.get("git", {}),
+        "sessions": coverage.get("sessions", []),
         "files": rendered_files,
         "unknown_events": coverage.get("unknown_events", []),
     }
@@ -224,7 +225,7 @@ main {
   background: #eef4ff;
 }
 .file-path,
-.unread-item,
+.side-item,
 .source-head strong,
 .source {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -238,21 +239,28 @@ main {
   font-size: 12px;
   white-space: nowrap;
 }
-.unread-panel {
+.side-panel {
   padding: 12px;
   border-top: 1px solid var(--border);
 }
-.unread-panel h2 {
+.side-panel h2 {
   font-size: 13px;
   margin: 0 0 8px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: .04em;
 }
-.unread-item {
+.side-item {
   font-size: 12px;
   padding: 5px 0;
   overflow-wrap: anywhere;
+}
+.side-note {
+  color: var(--muted);
+}
+.unknown-reason {
+  color: var(--muted);
+  margin-top: 2px;
 }
 .source-head {
   padding: 12px 16px;
@@ -307,6 +315,20 @@ main {
 .inspector code {
   color: var(--text);
 }
+.detail-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.detail-item {
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+.detail-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
 @media (max-width: 850px) {
   .layout {
     grid-template-columns: 1fr;
@@ -347,9 +369,13 @@ HTML_BODY = """
       </div>
     </div>
     <div id="files" class="file-list"></div>
-    <div class="unread-panel">
+    <div class="side-panel">
       <h2>Unread</h2>
       <div id="unread"></div>
+    </div>
+    <div class="side-panel">
+      <h2>Unknown Events</h2>
+      <div id="unknowns"></div>
     </div>
   </aside>
   <main>
@@ -370,7 +396,7 @@ const metrics = DATA.summary || {};
 document.getElementById('metrics').textContent =
   `${metrics.read_lines || 0}/${metrics.total_lines || 0} lines read ` +
   `(${metrics.read_percent || 0}%) · ${metrics.files || 0} files · ` +
-  `${metrics.unknown_events || 0} unknown events`;
+  `${metrics.sessions || 0} sessions · ${metrics.unknown_events || 0} unknown events`;
 const git = DATA.git || {};
 document.getElementById('git').textContent = [
   git.branch,
@@ -423,8 +449,28 @@ function renderUnread() {
       .slice(0, 4)
       .map(range => range.start === range.end ? range.start : `${range.start}-${range.end}`)
       .join(', ');
-    return `<div class="unread-item">${escapeHtml(path)}: ${ranges}</div>`;
-  }).join('') || '<div class="unread-item">No unread tracked lines.</div>';
+    return `<div class="side-item">${escapeHtml(path)}: ${ranges}</div>`;
+  }).join('') || '<div class="side-item side-note">No unread tracked lines.</div>';
+  renderUnknowns();
+}
+
+function renderUnknowns() {
+  const container = document.getElementById('unknowns');
+  const rows = (DATA.unknown_events || []).slice(0, 40);
+  container.innerHTML = rows.map(event => {
+    const label = event.command || event.tool_name || event.file || event.source || 'unknown';
+    const reason = event.reason || event.confidence || '';
+    const meta = [event.agent, shortSession(event.session_id), event.source]
+      .filter(Boolean)
+      .join(' · ');
+    return (
+      `<div class="side-item">` +
+      `<div>${escapeHtml(label)}</div>` +
+      (reason ? `<div class="unknown-reason">${escapeHtml(reason)}</div>` : '') +
+      (meta ? `<div class="unknown-reason">${escapeHtml(meta)}</div>` : '') +
+      `</div>`
+    );
+  }).join('') || '<div class="side-item side-note">No unknown events.</div>';
 }
 
 function renderSource() {
@@ -477,12 +523,51 @@ function inspectLine(line, stats) {
   const commands = (stats.commands || [])
     .map(command => `<div><code>${escapeHtml(command)}</code></div>`)
     .join('');
+  const attribution = renderAttribution(stats.attributions || []);
   document.getElementById('inspector').innerHTML =
     `<strong>${escapeHtml(selected)}:${line}</strong> · ` +
     `read ${stats.read_count || 0} · ` +
-    `search-seen ${stats.search_seen_count || 0} · ` +
-    `attention ${stats.attention_score || 0}` +
-    (commands ? `<div style="margin-top:8px">${commands}</div>` : '');
+    `search-seen ${stats.search_seen_count || 0}` +
+    ` (${stats.search_hit_count || 0} hit, ${stats.search_context_count || 0} context) · ` +
+    `attention ${stats.attention_score || 0} · ` +
+    `confidence ${escapeHtml(stats.confidence || 'exact')}` +
+    (commands ? `<div class="detail-list">${commands}</div>` : '') +
+    attribution;
+}
+
+function renderAttribution(items) {
+  if (!items.length) return '';
+  return (
+    '<div class="detail-list">' +
+    items.slice(0, 8).map(item => {
+      const task = (item.task_path || []).join(' › ');
+      const title = [
+        item.agent,
+        shortSession(item.session_id),
+        item.tool_name,
+      ].filter(Boolean).join(' · ') || 'event';
+      const meta = [
+        item.source,
+        item.timestamp,
+        task,
+      ].filter(Boolean).join(' · ');
+      const command = item.command ? `<div><code>${escapeHtml(item.command)}</code></div>` : '';
+      return (
+        `<div class="detail-item">` +
+        `<div>${escapeHtml(title)}</div>` +
+        (meta ? `<div class="detail-meta">${escapeHtml(meta)}</div>` : '') +
+        command +
+        `</div>`
+      );
+    }).join('') +
+    '</div>'
+  );
+}
+
+function shortSession(value) {
+  if (!value) return '';
+  const text = String(value);
+  return text.length > 12 ? text.slice(0, 12) : text;
 }
 
 function escapeHtml(value) {

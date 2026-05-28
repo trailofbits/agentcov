@@ -15,11 +15,14 @@ class LineStats:
     read_count: int = 0
     unique_read_count: int = 0
     search_seen_count: int = 0
+    search_hit_count: int = 0
+    search_context_count: int = 0
     attention_score: float = 0.0
     first_read_at: str | None = None
     last_read_at: str | None = None
     commands: list[str] = field(default_factory=list)
     events: list[str] = field(default_factory=list)
+    attributions: list[dict[str, Any]] = field(default_factory=list)
     confidence: str = "exact"
 
     def to_json(self) -> dict[str, Any]:
@@ -27,11 +30,14 @@ class LineStats:
             "read_count": self.read_count,
             "unique_read_count": self.unique_read_count,
             "search_seen_count": self.search_seen_count,
+            "search_hit_count": self.search_hit_count,
+            "search_context_count": self.search_context_count,
             "attention_score": round(self.attention_score, 4),
             "first_read_at": self.first_read_at,
             "last_read_at": self.last_read_at,
             "commands": self.commands,
             "events": self.events,
+            "attributions": self.attributions,
             "confidence": self.confidence,
         }
 
@@ -51,6 +57,14 @@ class FileCoverage:
     @property
     def search_seen_lines(self) -> int:
         return sum(1 for stats in self.lines.values() if stats.search_seen_count > 0)
+
+    @property
+    def search_hit_lines(self) -> int:
+        return sum(1 for stats in self.lines.values() if stats.search_hit_count > 0)
+
+    @property
+    def search_context_lines(self) -> int:
+        return sum(1 for stats in self.lines.values() if stats.search_context_count > 0)
 
     @property
     def read_percent(self) -> float:
@@ -96,6 +110,8 @@ class FileCoverage:
             "line_count": self.line_count,
             "read_lines": self.read_lines,
             "search_seen_lines": self.search_seen_lines,
+            "search_hit_lines": self.search_hit_lines,
+            "search_context_lines": self.search_context_lines,
             "read_percent": self.read_percent,
             "unread_ranges": [{"start": start, "end": end} for start, end in self.unread_ranges()],
             "read_ranges": self.read_ranges,
@@ -143,7 +159,12 @@ def build_coverage(
                 _event_summary(event, reason="file is missing, unreadable, or empty")
             )
             continue
-        for normalized in _merged_bounded_ranges(event.ranges, file_cov.line_count):
+        ranges = (
+            _bounded_search_ranges(event.ranges, file_cov.line_count)
+            if event.kind == "search_seen"
+            else _merged_bounded_ranges(event.ranges, file_cov.line_count)
+        )
+        for normalized in ranges:
             start = normalized.start
             end = normalized.end
             range_summary = {
@@ -154,8 +175,10 @@ def build_coverage(
                 "event_id": event.event_id,
                 "command": display_command(event.command),
                 "timestamp": event.timestamp,
+                "attribution": _event_attribution(event),
             }
             if event.kind == "search_seen":
+                range_summary["search_role"] = _search_role(normalized.weight)
                 file_cov.search_seen_ranges.append(range_summary)
             else:
                 file_cov.read_ranges.append(range_summary)
@@ -167,6 +190,9 @@ def build_coverage(
     total_lines = sum(coverage.line_count for coverage in files.values())
     read_lines = sum(coverage.read_lines for coverage in files.values())
     search_seen_lines = sum(coverage.search_seen_lines for coverage in files.values())
+    search_hit_lines = sum(coverage.search_hit_lines for coverage in files.values())
+    search_context_lines = sum(coverage.search_context_lines for coverage in files.values())
+    sessions = _session_rollups(events)
     return {
         "schema_version": 1,
         "tool": "aicov",
@@ -180,10 +206,14 @@ def build_coverage(
             "total_lines": total_lines,
             "read_lines": read_lines,
             "search_seen_lines": search_seen_lines,
+            "search_hit_lines": search_hit_lines,
+            "search_context_lines": search_context_lines,
             "read_percent": round((read_lines / total_lines) * 100, 2) if total_lines else 100.0,
             "events": len(events),
+            "sessions": len(sessions),
             "unknown_events": len(unknown_events),
         },
+        "sessions": sessions,
         "files": files_json,
         "unknown_events": unknown_events,
     }
@@ -198,11 +228,14 @@ def coverage_files(coverage: dict[str, Any]) -> dict[str, FileCoverage]:
                 read_count=int(stats_data.get("read_count", 0)),
                 unique_read_count=int(stats_data.get("unique_read_count", 0)),
                 search_seen_count=int(stats_data.get("search_seen_count", 0)),
+                search_hit_count=int(stats_data.get("search_hit_count", 0)),
+                search_context_count=int(stats_data.get("search_context_count", 0)),
                 attention_score=float(stats_data.get("attention_score", 0.0)),
                 first_read_at=stats_data.get("first_read_at"),
                 last_read_at=stats_data.get("last_read_at"),
                 commands=list(stats_data.get("commands") or []),
                 events=list(stats_data.get("events") or []),
+                attributions=list(stats_data.get("attributions") or []),
                 confidence=stats_data.get("confidence", "exact"),
             )
             file_cov.lines[int(line_text)] = stats
@@ -234,6 +267,10 @@ def top_unread_files(coverage: dict[str, Any], *, limit: int | None = None) -> l
 def _apply_event_to_line(stats: LineStats, event: CoverageEvent, *, weight: float) -> None:
     if event.kind == "search_seen":
         stats.search_seen_count += 1
+        if _search_role(weight) == "context":
+            stats.search_context_count += 1
+        else:
+            stats.search_hit_count += 1
     else:
         stats.read_count += 1
         if event.event_id not in stats.events:
@@ -248,6 +285,9 @@ def _apply_event_to_line(stats: LineStats, event: CoverageEvent, *, weight: floa
         stats.commands.append(command)
     if event.event_id not in stats.events and len(stats.events) < 24:
         stats.events.append(event.event_id)
+    attribution = _event_attribution(event)
+    if attribution and attribution not in stats.attributions and len(stats.attributions) < 24:
+        stats.attributions.append(attribution)
     if event.confidence == "unknown":
         stats.confidence = "unknown"
     elif event.confidence == "low" and stats.confidence == "exact":
@@ -285,6 +325,28 @@ def _merged_bounded_ranges(ranges: list[LineRange], line_count: int) -> list[Lin
     ]
 
 
+def _bounded_search_ranges(ranges: list[LineRange], line_count: int) -> list[LineRange]:
+    by_line: dict[int, tuple[Confidence, float]] = {}
+    for line_range in ranges:
+        normalized = line_range.normalized()
+        start = max(1, normalized.start)
+        end = min(normalized.end, line_count)
+        for line in range(start, end + 1):
+            previous = by_line.get(line)
+            if previous is None:
+                by_line[line] = (normalized.confidence, normalized.weight)
+                continue
+            confidence, weight = previous
+            by_line[line] = (
+                _least_confident(confidence, normalized.confidence),
+                max(weight, normalized.weight),
+            )
+    return [
+        LineRange(start=line, end=line, confidence=confidence, weight=weight)
+        for line, (confidence, weight) in sorted(by_line.items())
+    ]
+
+
 def _least_confident(left: Confidence, right: Confidence) -> Confidence:
     order = {"exact": 0, "inferred": 1, "low": 2, "unknown": 3}
     return left if order.get(left, 0) >= order.get(right, 0) else right
@@ -294,12 +356,94 @@ def _event_summary(event: CoverageEvent, *, reason: str | None = None) -> dict[s
     return {
         "event_id": event.event_id,
         "timestamp": event.timestamp,
+        "agent": event.agent,
         "source": event.source,
+        "session_id": event.session_id,
+        "turn_id": event.turn_id,
+        "tool_use_id": event.tool_use_id,
         "tool_name": event.tool_name,
+        "file": event.file,
         "command": display_command(event.command, limit=300),
+        "task_path": event.task_path,
         "reason": reason or event.reason,
         "confidence": event.confidence,
     }
+
+
+def _event_attribution(event: CoverageEvent) -> dict[str, Any]:
+    data = {
+        "event_id": event.event_id,
+        "timestamp": event.timestamp,
+        "agent": event.agent,
+        "source": event.source,
+        "session_id": event.session_id,
+        "turn_id": event.turn_id,
+        "tool_use_id": event.tool_use_id,
+        "tool_name": event.tool_name,
+        "command": display_command(event.command, limit=240),
+        "task_path": event.task_path,
+        "confidence": event.confidence,
+    }
+    return {
+        key: value
+        for key, value in data.items()
+        if value is not None and value != "" and value != []
+    }
+
+
+def _session_rollups(events: list[CoverageEvent]) -> list[dict[str, Any]]:
+    rollups: dict[tuple[str | None, str], dict[str, Any]] = {}
+    for event in events:
+        key = (event.session_id, event.agent)
+        rollup = rollups.setdefault(
+            key,
+            {
+                "session_id": event.session_id,
+                "agent": event.agent,
+                "first_seen_at": event.timestamp,
+                "last_seen_at": event.timestamp,
+                "events": 0,
+                "read_events": 0,
+                "search_seen_events": 0,
+                "unknown_events": 0,
+                "sources": set(),
+                "task_paths": [],
+            },
+        )
+        rollup["events"] += 1
+        if event.kind == "read":
+            rollup["read_events"] += 1
+        elif event.kind == "search_seen":
+            rollup["search_seen_events"] += 1
+        else:
+            rollup["unknown_events"] += 1
+        rollup["first_seen_at"] = min(rollup["first_seen_at"], event.timestamp)
+        rollup["last_seen_at"] = max(rollup["last_seen_at"], event.timestamp)
+        rollup["sources"].add(event.source)
+        if event.task_path and event.task_path not in rollup["task_paths"]:
+            rollup["task_paths"].append(event.task_path)
+
+    rows = []
+    for rollup in rollups.values():
+        rows.append(
+            {
+                **rollup,
+                "sources": sorted(rollup["sources"]),
+                "task_paths": rollup["task_paths"][:12],
+            }
+        )
+    return sorted(
+        rows,
+        key=lambda item: (
+            str(item["session_id"] or ""),
+            str(item["agent"] or ""),
+            str(item["first_seen_at"] or ""),
+        ),
+    )
+
+
+def _search_role(weight: float) -> str:
+    return "context" if weight < 0.35 else "hit"
 
 
 def _source_path(root: Path, rel: str) -> Path:

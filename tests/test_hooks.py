@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from aicov.hooks import events_from_payload, install_codex_hooks, uninstall_codex_hooks
+from aicov.hooks import events_from_payload, install_codex_hooks, run_stop, uninstall_codex_hooks
+from aicov.models import CoverageEvent, LineRange
+from aicov.storage import append_events
 
 
 def test_events_from_codex_bash_payload(tmp_path: Path) -> None:
@@ -106,6 +108,27 @@ def test_metadata_get_mcp_path_payload_is_not_counted(tmp_path: Path) -> None:
     assert events == []
 
 
+def test_user_hook_dry_run_and_uninstall(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+    path, merged, changed = install_codex_hooks(
+        target="user",
+        cwd=tmp_path,
+        dry_run=True,
+    )
+
+    assert path == tmp_path / ".codex" / "hooks.json"
+    assert changed is True
+    assert "PostToolUse" in merged["hooks"]
+    assert not path.exists()
+
+    install_codex_hooks(target="user", cwd=tmp_path, dry_run=False)
+    _, updated, changed = uninstall_codex_hooks(target="user", cwd=tmp_path, dry_run=False)
+
+    assert changed is True
+    assert updated.get("hooks") == {}
+
+
 def test_install_and_uninstall_repo_hooks_preserves_unrelated_hooks(tmp_path: Path) -> None:
     hooks_path = tmp_path / ".codex" / "hooks.json"
     hooks_path.parent.mkdir()
@@ -154,3 +177,28 @@ def test_install_and_uninstall_repo_hooks_preserves_unrelated_hooks(tmp_path: Pa
         for hook in entry.get("hooks", [])
     ]
     assert remaining == ["echo unrelated"]
+
+
+def test_stop_writes_configured_auto_reports(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\n", encoding="utf-8")
+    (tmp_path / ".aicov.toml").write_text(
+        'auto_reports = ["lcov", "html"]\n',
+        encoding="utf-8",
+    )
+    append_events(
+        [
+            CoverageEvent(
+                repo_root=str(tmp_path),
+                source="test",
+                file="app.py",
+                ranges=[LineRange(1, 1)],
+            )
+        ],
+        root=tmp_path,
+    )
+
+    coverage_path = run_stop({"cwd": str(tmp_path)})
+
+    assert coverage_path == tmp_path / ".aicov" / "coverage.json"
+    assert (tmp_path / ".aicov" / "reports" / "aicov.info").exists()
+    assert (tmp_path / ".aicov" / "reports" / "aicov.html").exists()

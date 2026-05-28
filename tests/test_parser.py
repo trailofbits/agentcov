@@ -132,6 +132,7 @@ def test_parse_search_seen_from_output(tmp_path: Path) -> None:
     assert observations[0].kind == "search_seen"
     assert observations[0].file == "src/app.py"
     assert [(r.start, r.end) for r in observations[0].ranges] == [(4, 4), (8, 8)]
+    assert [r.weight for r in observations[0].ranges] == [0.35, 0.2]
 
 
 def test_ambiguous_command_is_unknown(tmp_path: Path) -> None:
