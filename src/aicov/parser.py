@@ -78,6 +78,8 @@ def parse_direct_tool_input(
     limit = _as_int(tool_input.get("limit"))
     if start is None and offset is not None:
         start = max(1, offset + 1)
+    if start is None and limit is not None:
+        start = 1
     if end is None and start is not None and limit is not None:
         end = start + max(0, limit - 1)
 
@@ -335,8 +337,10 @@ def _response_text(value: object | None) -> str:
             if isinstance(child, str):
                 parts.append(child)
             elif isinstance(child, list):
-                parts.extend(str(item) for item in child if isinstance(item, str))
+                parts.extend(_response_text(item) for item in child)
         return "\n".join(parts)
+    if isinstance(value, list):
+        return "\n".join(_response_text(item) for item in value)
     return ""
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .aggregate import build_coverage
-from .backfill import backfill_codex_session
+from .backfill import backfill_session
 from .config import load_config
 from .git import find_repo_root
 from .hooks import (
@@ -85,8 +85,14 @@ def build_parser() -> argparse.ArgumentParser:
     unread.add_argument("--limit", type=int, help="Maximum rows to print")
     unread.set_defaults(func=_cmd_unread)
 
-    backfill = subparsers.add_parser("backfill", help="Backfill events from a Codex transcript")
-    backfill.add_argument("--session-id", help="Codex session id to find under ~/.codex/sessions")
+    backfill = subparsers.add_parser("backfill", help="Backfill events from an agent transcript")
+    backfill.add_argument(
+        "--agent",
+        choices=["codex", "claude", "auto"],
+        default="codex",
+        help="Transcript format to parse",
+    )
+    backfill.add_argument("--session-id", help="Session id to find in the agent transcript store")
     backfill.add_argument("--path", type=Path, help="Transcript JSONL path")
     backfill.set_defaults(func=_cmd_backfill)
 
@@ -201,7 +207,11 @@ def _cmd_unread(args: argparse.Namespace) -> int:
 
 
 def _cmd_backfill(args: argparse.Namespace) -> int:
-    root, events = backfill_codex_session(session_id=args.session_id, transcript_path=args.path)
+    root, events = backfill_session(
+        agent=args.agent,
+        session_id=args.session_id,
+        transcript_path=args.path,
+    )
     count = append_events(events, root=root)
     print(f"imported {count} event(s)")
     return 0

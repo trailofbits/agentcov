@@ -16,7 +16,8 @@ Initial product direction:
 - Ship as a standalone CLI first.
 - Provide `install-codex-hooks` to wire the CLI into Codex.
 - Implement the MVP in Python.
-- Focus the MVP on Codex. Claude, Cursor, and other agents can come later.
+- Focus live hooks on Codex. Support transcript backfill for Codex and Claude
+  Code, with Cursor and other agents later.
 - Keep unresolved command handling conservative; do not use LLM-assisted
   inference by default.
 - Store repo-specific data in `.aicov/` by default, with optional user-level
@@ -183,7 +184,8 @@ events.
 
 Backfill should:
 
-- Read `~/.codex/sessions` by session id or transcript path.
+- Read `~/.codex/sessions` and `~/.claude/projects` by session id or
+  transcript path.
 - Extract user requests, visible commentary, checklist updates, subagents, and
   command/tool calls.
 - Reconstruct task/subagent ownership for each read event.
@@ -437,7 +439,8 @@ aicov uninstall-codex-hooks --repo
 aicov hook post-tool-use
 aicov hook pre-tool-use
 aicov hook stop
-aicov backfill --session-id <id>
+aicov backfill --agent codex --session-id <id>
+aicov backfill --agent claude --session-id <id>
 aicov import agent-coverage.json
 aicov report --format lcov --counts full --out aicov.info
 aicov report --format lcov --counts binary --out aicov-binary.info
@@ -507,7 +510,7 @@ The first useful version should include:
 8. Git-tracked file inventory so never-read files appear in reports.
 9. Optional `.aicov.toml` config with default excludes.
 10. Single-file static HTML heatmap.
-11. Transcript backfill for Codex sessions.
+11. Transcript backfill for Codex and Claude Code sessions.
 12. `aicov unread` or equivalent summary to direct audit attention to unread
     files and ranges.
 

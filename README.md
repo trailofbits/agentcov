@@ -5,10 +5,13 @@ It writes ordinary LCOV and textual `.gcov`-style reports so existing coverage
 tools can inspect AI read coverage, and it also writes a richer native JSON
 format for agent audit workflows.
 
-The MVP is Codex-focused:
+The MVP captures live Codex hook events and can backfill Codex or Claude Code
+session transcripts:
 
 - install Codex hooks with `aicov install-codex-hooks --user` or `--repo`
 - capture hook events to `.aicov/events.jsonl`
+- backfill Codex transcripts with `aicov backfill --agent codex --session-id <id>`
+- backfill Claude Code transcripts with `aicov backfill --agent claude --session-id <id>`
 - parse common `sed`, `head`, `tail`, `cat`, `awk`, `rg`, and `grep` reads
 - distinguish direct reads from `search_seen` lines
 - include git-tracked files that were never read

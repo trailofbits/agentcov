@@ -36,6 +36,7 @@ def events_from_payload(
     payload: dict[str, Any],
     *,
     source: str = "codex-post-tool-use",
+    agent: str = "codex",
 ) -> tuple[Path, list[CoverageEvent]]:
     tool_input = payload.get("tool_input") or payload.get("input") or payload.get("arguments") or {}
     if isinstance(tool_input, str):
@@ -64,6 +65,7 @@ def events_from_payload(
             root=root,
             cwd=cwd,
             source=source,
+            agent=agent,
             tool_name=str(tool_name) if tool_name else None,
             command=command,
         )
@@ -326,6 +328,7 @@ def _event_from_observation(
     root: Path,
     cwd: Path,
     source: str,
+    agent: str,
     tool_name: str | None,
     command: str | None,
 ) -> CoverageEvent:
@@ -337,7 +340,7 @@ def _event_from_observation(
         timestamp=_first_string(payload, "timestamp", "time") or now_iso(),
         cwd=str(cwd),
         repo_root=str(root),
-        agent="codex",
+        agent=agent,
         source=source,
         tool_name=tool_name,
         command=command,
