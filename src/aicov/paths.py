@@ -9,13 +9,15 @@ def normalize_file_path(raw: str, cwd: Path, root: Path) -> str | None:
     candidate = raw.strip().strip("'\"")
     if not candidate or candidate.startswith(("http://", "https://")):
         return None
+    root_resolved = root.resolve()
     path = Path(candidate).expanduser()
     if not path.is_absolute():
-        path = (cwd / path).resolve()
+        path = cwd / path
+    path = path.resolve()
     try:
-        return path.relative_to(root).as_posix()
+        return path.relative_to(root_resolved).as_posix()
     except ValueError:
-        return path.as_posix()
+        return None
 
 
 def display_command(command: str | None, limit: int = 180) -> str | None:
@@ -24,4 +26,8 @@ def display_command(command: str | None, limit: int = 180) -> str | None:
     compact = " ".join(command.split())
     if len(compact) <= limit:
         return compact
+    if limit <= 0:
+        return ""
+    if limit <= 3:
+        return "." * limit
     return compact[: limit - 3] + "..."

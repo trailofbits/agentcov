@@ -113,9 +113,7 @@ always refreshed; add `lcov`, `gcov`, or `html` to write shareable reports under
 Recommended local ignore rules:
 
 ```gitignore
-.aicov/events.jsonl
-.aicov/raw/
-.aicov/tmp/
+.aicov/
 ```
 
 Commit or archive `.aicov/coverage.json`, LCOV, gcov, or HTML outputs only when
@@ -123,10 +121,15 @@ you want a durable audit artifact.
 
 ## Privacy
 
-By default, `aicov` stores commands, paths, line ranges, timestamps, and compact
-metadata. It does not store raw tool output or source snippets in the event log.
-The HTML report embeds source lines because it is a source viewer; share that
-file with the same care as the repository.
+By default, `aicov` stores commands, paths, line ranges, timestamps, session and
+tool ids, agent names, and task attribution. Backfilled transcripts may include
+the agent's prompt or task label in `task_path` so reports can explain why a
+line was inspected. It does not store raw tool output or source snippets in the
+event log.
+
+The native coverage JSON and HTML report include attribution from the event log.
+The HTML report also embeds source lines because it is a source viewer; share
+those files with the same care as the repository and transcript metadata.
 
 ## Development
 

@@ -27,9 +27,12 @@ def read_hook_payload(stdin: TextIO | None = None) -> dict[str, Any]:
     raw = (stdin or sys.stdin).read()
     if not raw.strip():
         return {}
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
     if not isinstance(data, dict):
-        raise ValueError("hook payload must be a JSON object")
+        return {}
     return data
 
 
@@ -185,18 +188,24 @@ def _write_auto_reports(coverage: dict[str, Any], *, root: Path, config: AicovCo
         return
 
     reports_dir = storage_dir(root, config) / "reports"
-    if "lcov" in enabled:
-        from .report import write_lcov
+    for name in sorted(enabled - {"json"}):
+        try:
+            if name == "lcov":
+                from .report import write_lcov
 
-        write_lcov(coverage, out=reports_dir / "aicov.info")
-    if "gcov" in enabled:
-        from .report import write_gcov
+                write_lcov(coverage, out=reports_dir / "aicov.info")
+            elif name == "gcov":
+                from .report import write_gcov
 
-        write_gcov(coverage, root=root, out_dir=reports_dir / "gcov")
-    if "html" in enabled:
-        from .report import write_html
+                write_gcov(coverage, root=root, out_dir=reports_dir / "gcov")
+            elif name == "html":
+                from .report import write_html
 
-        write_html(coverage, root=root, out=reports_dir / "aicov.html")
+                write_html(coverage, root=root, out=reports_dir / "aicov.html")
+            else:
+                print(f"aicov: warning: unknown auto_report {name!r}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 - hook reports must stay best-effort.
+            print(f"aicov: warning: failed to write {name} report: {exc}", file=sys.stderr)
 
 
 def _merge_hooks(existing: dict[str, Any], addition: dict[str, Any]) -> dict[str, Any]:

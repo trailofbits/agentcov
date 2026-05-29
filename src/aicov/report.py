@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -42,13 +43,15 @@ def write_gcov(
 ) -> Path:
     files = coverage_files(coverage)
     out_dir.mkdir(parents=True, exist_ok=True)
+    targets: dict[Path, str] = {}
     for rel, file_cov in sorted(files.items()):
         source_path = root / rel
         source_lines = _read_source_lines(source_path)
-        target = out_dir / f"{_safe_report_path(rel)}.gcov"
+        target = _gcov_target(out_dir, rel, targets)
         target.parent.mkdir(parents=True, exist_ok=True)
         rows = [f"{'-':>9}:{0:>5}:Source:{rel}"]
-        for line_number in range(1, file_cov.line_count + 1):
+        line_total = len(source_lines) if source_lines else file_cov.line_count
+        for line_number in range(1, line_total + 1):
             count = file_cov.count_for_line(line_number, mode=counts)
             count_text = str(count) if count else "#####"
             source = source_lines[line_number - 1] if line_number - 1 < len(source_lines) else ""
@@ -627,3 +630,13 @@ def _safe_report_path(path: str) -> str:
         if cleaned:
             safe_parts.append(cleaned)
     return "/".join(safe_parts) or "external"
+
+
+def _gcov_target(out_dir: Path, rel: str, targets: dict[Path, str]) -> Path:
+    base = _safe_report_path(rel)
+    target = out_dir / f"{base}.gcov"
+    if target in targets and targets[target] != rel:
+        digest = hashlib.sha1(rel.encode("utf-8")).hexdigest()[:10]
+        target = out_dir / f"{base}.{digest}.gcov"
+    targets[target] = rel
+    return target

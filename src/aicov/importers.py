@@ -56,6 +56,7 @@ def _events_from_coverage_item(
         events.append(
             CoverageEvent(
                 repo_root=str(root),
+                agent="import",
                 source="agent-coverage-import",
                 tool_name="import",
                 command=str(command) if command else None,
@@ -71,10 +72,18 @@ def _events_from_coverage_item(
 
 def _parse_range(value: str) -> tuple[str, int, int] | None:
     parts = value.rsplit(":", 2)
-    if len(parts) != 3:
+    if len(parts) == 2:
+        file, start = parts
+        end = start
+    elif len(parts) == 3:
+        file, start, end = parts
+    else:
         return None
-    file, start, end = parts
     try:
-        return file, int(start), int(end)
+        parsed_start = int(start)
+        parsed_end = int(end)
     except ValueError:
         return None
+    if not file or parsed_start < 1 or parsed_end < parsed_start:
+        return None
+    return file, parsed_start, parsed_end

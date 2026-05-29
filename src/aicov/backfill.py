@@ -5,7 +5,7 @@ from pathlib import Path
 from .claude_transcript import looks_like_claude_transcript, payloads_from_claude_records
 from .codex_transcript import payloads_from_codex_record
 from .hooks import events_from_payload
-from .models import CoverageEvent
+from .models import CoverageEvent, coverage_event_identity
 from .pi_transcript import looks_like_pi_transcript, payloads_from_pi_records
 from .transcripts import (
     claude_session_paths_from_transcript,
@@ -100,7 +100,7 @@ def backfill_session(
         return backfill_claude_session(session_id=session_id, transcript_path=transcript_path)
     if selected == "pi":
         return backfill_pi_session(session_id=session_id, transcript_path=transcript_path)
-    raise ValueError(f"unsupported agent: {agent}")
+    raise ValueError(f"unsupported agent: {selected}")
 
 
 def _find_codex_session(session_id: str | None) -> Path:
@@ -136,35 +136,11 @@ def _extend_new_events(
     seen: set[tuple[object, ...]],
 ) -> None:
     for event in parsed_events:
-        key = _event_key(event)
+        key = coverage_event_identity(event)
         if key in seen:
             continue
         seen.add(key)
         events.append(event)
-
-
-def _event_key(event: CoverageEvent) -> tuple[object, ...]:
-    ranges = tuple(
-        (
-            item.start,
-            item.end,
-            item.confidence,
-            item.weight,
-        )
-        for item in event.ranges
-    )
-    return (
-        event.session_id,
-        event.turn_id,
-        event.tool_use_id,
-        event.agent,
-        event.tool_name,
-        event.command,
-        event.file,
-        ranges,
-        event.kind,
-        event.reason,
-    )
 
 
 def _infer_agent(*, session_id: str | None, transcript_path: Path | None) -> str:

@@ -8,8 +8,4 @@ build/
 
 agent-coverage/
 aicov.info
-.aicov/events.jsonl
-.aicov/coverage.json
-.aicov/reports/
-.aicov/raw/
-.aicov/tmp/
+.aicov/

@@ -263,6 +263,29 @@ def test_gcov_sanitizes_absolute_and_parent_paths(tmp_path: Path) -> None:
     assert not (tmp_path / "outside.py.gcov").exists()
 
 
+def test_gcov_keeps_colliding_sanitized_paths_distinct(tmp_path: Path) -> None:
+    coverage = {
+        "files": {
+            "src/a:b.py": {
+                "line_count": 1,
+                "lines": {"1": {"read_count": 1}},
+                "read_ranges": [],
+                "search_seen_ranges": [],
+            },
+            "src/a_b.py": {
+                "line_count": 1,
+                "lines": {"1": {"read_count": 1}},
+                "read_ranges": [],
+                "search_seen_ranges": [],
+            },
+        }
+    }
+
+    out_dir = write_gcov(coverage, root=tmp_path, out_dir=tmp_path / "gcov")
+
+    assert len(list((out_dir / "src").glob("a_b.py*.gcov"))) == 2
+
+
 def test_html_includes_unknown_events_and_attribution_payload(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("one\ntwo\n", encoding="utf-8")
     coverage = build_coverage(
@@ -352,6 +375,32 @@ def test_json_report_default_uses_configured_storage_dir(tmp_path: Path) -> None
     assert (repo / ".custom-aicov" / "coverage.json").exists()
 
 
+def test_report_rejects_mismatched_output_flags(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("one\n", encoding="utf-8")
+    _git(["init"], tmp_path)
+    _git(["add", "a.py"], tmp_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aicov",
+            "--root",
+            str(tmp_path),
+            "report",
+            "--format",
+            "gcov",
+            "--out",
+            "aicov.info",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "uses --out-dir" in completed.stderr
+
+
 def test_append_events_can_dedupe_backfilled_events(tmp_path: Path) -> None:
     first = CoverageEvent(
         session_id="sess",
@@ -413,16 +462,20 @@ def test_append_events_by_root_writes_each_repo_store(tmp_path: Path) -> None:
 def test_import_agent_coverage_simple_array(tmp_path: Path) -> None:
     payload = tmp_path / "agent-coverage.json"
     payload.write_text(
-        '[{"cmd":"sed -n 1,2p app.py","ranges":["app.py:1:2"]}]',
+        '[{"cmd":"sed -n 1,2p app.py","ranges":["app.py:1:2","app.py:3","app.py:0:1"]}]',
         encoding="utf-8",
     )
 
     root, events = import_agent_coverage(payload, cwd=tmp_path)
 
     assert root == tmp_path
-    assert len(events) == 1
-    assert events[0].file == "app.py"
-    assert [(item.start, item.end) for item in events[0].ranges] == [(1, 2)]
+    assert len(events) == 2
+    assert [event.agent for event in events] == ["import", "import"]
+    assert [event.file for event in events] == ["app.py", "app.py"]
+    assert [[(item.start, item.end) for item in event.ranges] for event in events] == [
+        [(1, 2)],
+        [(3, 3)],
+    ]
 
 
 def test_import_agent_coverage_hierarchical_tasks(tmp_path: Path) -> None:

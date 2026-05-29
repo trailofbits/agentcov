@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args) or 0)
     except Exception as exc:  # noqa: BLE001 - CLI should report cleanly.
-        print(f"aicov: error: {exc}", file=sys.stderr)
+        if os.getenv("AICOV_DEBUG"):
+            traceback.print_exc()
+        else:
+            print(f"aicov: error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
 
@@ -105,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_target_flags(parser: argparse.ArgumentParser) -> None:
-    group = parser.add_mutually_exclusive_group()
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--user", action="store_true", help="Install into ~/.codex/hooks.json")
     group.add_argument("--repo", action="store_true", help="Install into .codex/hooks.json")
 
@@ -169,6 +174,7 @@ def _cmd_hook_stop(args: argparse.Namespace) -> int:
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
+    _validate_report_args(args)
     root, coverage = _coverage(args)
     if args.format == "json":
         out = _resolve_output(root, args.out) if args.out else None
@@ -213,15 +219,15 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
         session_id=args.session_id,
         transcript_path=args.path,
     )
-    count = _append_events_by_root(events, fallback_root=root, dedupe=True)
-    print(f"imported {count} event(s)")
+    counts = _append_events_by_root_counts(events, fallback_root=root, dedupe=True)
+    print(_import_summary(counts))
     return 0
 
 
 def _cmd_import(args: argparse.Namespace) -> int:
     root, events = import_agent_coverage(args.path, cwd=_cwd(args))
-    count = _append_events_by_root(events, fallback_root=root, dedupe=True)
-    print(f"imported {count} event(s)")
+    counts = _append_events_by_root_counts(events, fallback_root=root, dedupe=True)
+    print(_import_summary(counts))
     return 0
 
 
@@ -241,14 +247,37 @@ def _cwd(args: argparse.Namespace) -> Path:
 
 
 def _target(args: argparse.Namespace) -> str:
-    return "repo" if getattr(args, "repo", False) else "user"
+    return "repo" if args.repo else "user"
 
 
 def _append_events_by_root(
     events: list[CoverageEvent], *, fallback_root: Path, dedupe: bool
 ) -> int:
+    return sum(
+        _append_events_by_root_counts(events, fallback_root=fallback_root, dedupe=dedupe).values()
+    )
+
+
+def _append_events_by_root_counts(
+    events: list[CoverageEvent], *, fallback_root: Path, dedupe: bool
+) -> dict[Path, int]:
     grouped: dict[Path, list[CoverageEvent]] = {}
     for event in events:
         root = Path(event.repo_root).resolve() if event.repo_root else fallback_root
         grouped.setdefault(root, []).append(event)
-    return sum(append_events(group, root=root, dedupe=dedupe) for root, group in grouped.items())
+    return {root: append_events(group, root=root, dedupe=dedupe) for root, group in grouped.items()}
+
+
+def _validate_report_args(args: argparse.Namespace) -> None:
+    if args.format == "gcov" and args.out is not None:
+        raise ValueError("report --format gcov uses --out-dir, not --out")
+    if args.format != "gcov" and args.out_dir is not None:
+        raise ValueError("report --out-dir is only supported with --format gcov")
+
+
+def _import_summary(counts: dict[Path, int]) -> str:
+    total = sum(counts.values())
+    if not counts:
+        return "imported 0 event(s)"
+    roots = ", ".join(f"{root} ({count})" for root, count in sorted(counts.items()))
+    return f"imported {total} event(s) into {roots}"

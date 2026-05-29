@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
 from .config import AicovConfig, load_config
 from .git import find_repo_root
-from .models import CoverageEvent
+from .models import CoverageEvent, coverage_event_identity
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None  # type: ignore[assignment]
 
 EVENTS_FILE = "events.jsonl"
 COVERAGE_FILE = "coverage.json"
@@ -36,21 +44,25 @@ def append_events(
     cfg = config or load_config(repo_root)
     path = events_path(repo_root, cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if dedupe:
-        seen = {_event_identity(event) for event in load_events(root=repo_root, config=cfg)}
-    else:
-        seen = set()
     count = 0
-    with path.open("a", encoding="utf-8") as file:
+    with path.open("a+", encoding="utf-8") as file:
+        _lock_file(file)
+        if dedupe:
+            file.seek(0)
+            seen = {coverage_event_identity(event) for event in _read_events(file, path)}
+            file.seek(0, os.SEEK_END)
+        else:
+            seen = set()
         for event in events:
             if dedupe:
-                key = _event_identity(event)
+                key = coverage_event_identity(event)
                 if key in seen:
                     continue
                 seen.add(key)
-            file.write(json.dumps(event.to_json(), sort_keys=True, separators=(",", ":")))
-            file.write("\n")
+            file.write(json.dumps(event.to_json(), sort_keys=True, separators=(",", ":")) + "\n")
             count += 1
+        file.flush()
+        os.fsync(file.fileno())
     return count
 
 
@@ -65,17 +77,24 @@ def load_events(
     event_path = path or events_path(repo_root, cfg)
     if not event_path.exists():
         return []
-    events: list[CoverageEvent] = []
     with event_path.open("r", encoding="utf-8") as file:
-        for line_number, line in enumerate(file, start=1):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                events.append(CoverageEvent.from_json(json.loads(stripped)))
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                message = f"invalid event JSON at {event_path}:{line_number}: {exc}"
-                raise ValueError(message) from exc
+        return _read_events(file, event_path)
+
+
+def _read_events(file: Iterable[str], event_path: Path) -> list[CoverageEvent]:
+    events: list[CoverageEvent] = []
+    for line_number, line in enumerate(file, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            data = json.loads(stripped)
+            if not isinstance(data, dict):
+                raise ValueError("event JSON must be an object")
+            events.append(CoverageEvent.from_json(data))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            message = f"invalid event JSON at {event_path}:{line_number}: {exc}"
+            raise ValueError(message) from exc
     return events
 
 
@@ -90,25 +109,43 @@ def write_coverage_json(
     cfg = config or load_config(repo_root)
     out = path or coverage_path(repo_root, cfg)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(coverage, indent=2, sort_keys=True), encoding="utf-8")
+    data = json.dumps(coverage, indent=2, sort_keys=True)
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=out.parent,
+        prefix=f".{out.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as file:
+        tmp_name = file.name
+        try:
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
+            raise
+    try:
+        os.replace(tmp_name, out)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+    _fsync_parent(out)
     return out
 
 
-def _event_identity(event: CoverageEvent) -> tuple[object, ...]:
-    ranges = tuple((item.start, item.end, item.confidence, item.weight) for item in event.ranges)
-    return (
-        event.schema_version,
-        event.session_id,
-        event.turn_id,
-        event.tool_use_id,
-        event.agent,
-        event.source,
-        event.tool_name,
-        event.command,
-        event.file,
-        ranges,
-        event.kind,
-        event.confidence,
-        event.reason,
-        tuple(event.task_path),
-    )
+def _lock_file(file: object) -> None:
+    if fcntl is not None:
+        fcntl.flock(file.fileno(), fcntl.LOCK_EX)
+
+
+def _fsync_parent(path: Path) -> None:
+    with contextlib.suppress(OSError):
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)

@@ -3,9 +3,12 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+from codecs import getincrementaldecoder
 from pathlib import Path
 
 from .config import AicovConfig, is_excluded
+
+TEXT_SAMPLE_BYTES = 8192
 
 
 def run_git(root: Path, args: list[str]) -> str | None:
@@ -85,13 +88,15 @@ def _filesystem_files(root: Path, config: AicovConfig) -> list[str]:
 
 def is_text_file(path: Path) -> bool:
     try:
-        chunk = path.read_bytes()[:8192]
+        with path.open("rb") as file:
+            sample = file.read(TEXT_SAMPLE_BYTES + 1)
     except OSError:
         return False
+    chunk = sample[:TEXT_SAMPLE_BYTES]
     if b"\0" in chunk:
         return False
     try:
-        chunk.decode("utf-8")
+        getincrementaldecoder("utf-8")().decode(chunk, final=len(sample) <= TEXT_SAMPLE_BYTES)
     except UnicodeDecodeError:
         return False
     return True

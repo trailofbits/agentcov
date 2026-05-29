@@ -100,6 +100,36 @@ def test_parse_head_tail_cat_and_awk(tmp_path: Path) -> None:
     assert [(r.start, r.end) for r in awk[0].ranges] == [(10, 15)]
 
 
+def test_parse_head_tail_byte_counts_are_unknown(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "sample.py", 100)
+
+    head = parse_shell_command("head -c 100 sample.py", cwd=tmp_path, root=tmp_path)
+    tail = parse_shell_command("tail --bytes=100 sample.py", cwd=tmp_path, root=tmp_path)
+
+    assert head[0].kind == "unknown"
+    assert head[0].reason == "unsupported head shape"
+    assert tail[0].kind == "unknown"
+    assert tail[0].reason == "unsupported tail shape"
+
+
+def test_parse_sort_file_as_whole_file_read(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "sample.py", 12)
+
+    observations = parse_shell_command("sort sample.py", cwd=tmp_path, root=tmp_path)
+
+    assert observations[0].file == "sample.py"
+    assert [(r.start, r.end) for r in observations[0].ranges] == [(1, 12)]
+
+
+def test_parse_background_operator_splits_commands(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "a.py", 5)
+    _write_lines(tmp_path / "b.py", 6)
+
+    observations = parse_shell_command("cat a.py & cat b.py", cwd=tmp_path, root=tmp_path)
+
+    assert [event.file for event in observations] == ["a.py", "b.py"]
+
+
 def test_parse_cat_dash_n_preserves_filename(tmp_path: Path) -> None:
     _write_lines(tmp_path / "sample.py", 12)
 
@@ -114,9 +144,13 @@ def test_parse_tail_plus_start_line(tmp_path: Path) -> None:
 
     separated = parse_shell_command("tail -n +50 sample.py", cwd=tmp_path, root=tmp_path)
     attached = parse_shell_command("tail -n+75 sample.py", cwd=tmp_path, root=tmp_path)
+    long_separated = parse_shell_command("tail --lines +25 sample.py", cwd=tmp_path, root=tmp_path)
+    long_attached = parse_shell_command("tail --lines=+30 sample.py", cwd=tmp_path, root=tmp_path)
 
     assert [(r.start, r.end) for r in separated[0].ranges] == [(50, 100)]
     assert [(r.start, r.end) for r in attached[0].ranges] == [(75, 100)]
+    assert [(r.start, r.end) for r in long_separated[0].ranges] == [(25, 100)]
+    assert [(r.start, r.end) for r in long_attached[0].ranges] == [(30, 100)]
 
 
 def test_parse_search_seen_from_output(tmp_path: Path) -> None:

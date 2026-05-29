@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
-from aicov.hooks import events_from_payload, install_codex_hooks, run_stop, uninstall_codex_hooks
+from aicov.hooks import (
+    events_from_payload,
+    install_codex_hooks,
+    read_hook_payload,
+    run_stop,
+    uninstall_codex_hooks,
+)
 from aicov.models import CoverageEvent, LineRange
 from aicov.storage import append_events
 
@@ -108,6 +115,11 @@ def test_metadata_get_mcp_path_payload_is_not_counted(tmp_path: Path) -> None:
     assert events == []
 
 
+def test_read_hook_payload_treats_malformed_stdin_as_empty() -> None:
+    assert read_hook_payload(io.StringIO("not json")) == {}
+    assert read_hook_payload(io.StringIO("[]")) == {}
+
+
 def test_user_hook_dry_run_and_uninstall(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
 
@@ -202,3 +214,24 @@ def test_stop_writes_configured_auto_reports(tmp_path: Path) -> None:
     assert coverage_path == tmp_path / ".aicov" / "coverage.json"
     assert (tmp_path / ".aicov" / "reports" / "aicov.info").exists()
     assert (tmp_path / ".aicov" / "reports" / "aicov.html").exists()
+
+
+def test_stop_keeps_coverage_json_when_auto_report_fails(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\n", encoding="utf-8")
+    (tmp_path / ".aicov.toml").write_text('auto_reports = ["lcov"]\n', encoding="utf-8")
+    append_events(
+        [CoverageEvent(repo_root=str(tmp_path), file="app.py", ranges=[LineRange(1, 1)])],
+        root=tmp_path,
+    )
+
+    import aicov.report
+
+    def fail_report(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(aicov.report, "write_lcov", fail_report)
+
+    coverage_path = run_stop({"cwd": str(tmp_path)})
+
+    assert coverage_path == tmp_path / ".aicov" / "coverage.json"
+    assert coverage_path.exists()

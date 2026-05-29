@@ -23,7 +23,6 @@ NO_RANGE_COMMANDS = {
     "true",
     "false",
     "which",
-    "sort",
 }
 
 SEARCH_COMMANDS = {"rg", "grep", "egrep", "fgrep"}
@@ -160,6 +159,9 @@ def _parse_segment(
     if first == "awk":
         parsed = _parse_awk(tokens, cwd=cwd, root=root)
         return parsed or [_unknown(segment, "unsupported awk shape")]
+    if first == "sort":
+        parsed = _parse_sort(tokens, cwd=cwd, root=root)
+        return parsed or [_unknown(segment, "unsupported sort shape")]
     return [_unknown(segment, "unsupported command")]
 
 
@@ -226,9 +228,11 @@ def _parse_sed(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedObserv
 
 
 def _parse_head(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedObservation]:
-    count = _count_arg(tokens, default=10)
     source_file = _last_path_token(tokens[1:], cwd=cwd, root=root)
-    if not source_file or count <= 0:
+    if not source_file or _has_byte_count_arg(tokens):
+        return []
+    count = _line_count_arg(tokens, default=10)
+    if count <= 0:
         return []
     line_count = file_line_count(root / source_file)
     end = min(count, line_count) if line_count else count
@@ -245,7 +249,7 @@ def _parse_head(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedObser
 
 def _parse_tail(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedObservation]:
     source_file = _last_path_token(tokens[1:], cwd=cwd, root=root)
-    if not source_file:
+    if not source_file or _has_byte_count_arg(tokens):
         return []
     line_count = file_line_count(root / source_file)
     if line_count <= 0:
@@ -254,7 +258,7 @@ def _parse_tail(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedObser
     if plus_start is not None:
         start = min(max(1, plus_start), line_count)
     else:
-        count = _count_arg(tokens, default=10)
+        count = _line_count_arg(tokens, default=10)
         if count <= 0:
             return []
         start = max(1, line_count - count + 1)
@@ -313,6 +317,42 @@ def _parse_awk(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedObserv
             kind="read",
             confidence="exact",
             weight=READ_WEIGHTS["focused"],
+        )
+    ]
+
+
+def _parse_sort(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedObservation]:
+    source_file = _last_path_token(
+        tokens[1:],
+        cwd=cwd,
+        root=root,
+        value_options=frozenset(
+            {
+                "-k",
+                "--key",
+                "-o",
+                "--output",
+                "-S",
+                "--buffer-size",
+                "-t",
+                "--field-separator",
+                "-T",
+                "--temporary-directory",
+            }
+        ),
+    )
+    if not source_file:
+        return []
+    line_count = file_line_count(root / source_file)
+    if line_count <= 0:
+        return []
+    return [
+        ParsedObservation(
+            file=source_file,
+            ranges=[LineRange(1, line_count, "exact", READ_WEIGHTS["whole_file"])],
+            kind="read",
+            confidence="exact",
+            weight=READ_WEIGHTS["whole_file"],
         )
     ]
 
@@ -467,9 +507,9 @@ def _last_path_token(
     return normalize_file_path(candidates[-1], cwd, root)
 
 
-def _count_arg(tokens: list[str], default: int) -> int:
+def _line_count_arg(tokens: list[str], default: int) -> int:
     for index, token in enumerate(tokens[1:], start=1):
-        if token in {"-n", "-c"} and index + 1 < len(tokens):
+        if token in {"-n", "--lines"} and index + 1 < len(tokens):
             value = _as_int(tokens[index + 1])
             if value is not None:
                 return value
@@ -477,19 +517,34 @@ def _count_arg(tokens: list[str], default: int) -> int:
             value = _as_int(token[2:])
             if value is not None:
                 return value
+        if token.startswith("--lines="):
+            value = _as_int(token.removeprefix("--lines="))
+            if value is not None:
+                return value
         if re.match(r"^-\d+$", token):
             return abs(int(token))
     return default
 
 
+def _has_byte_count_arg(tokens: list[str]) -> bool:
+    for token in tokens[1:]:
+        if token in {"-c", "--bytes"} or token.startswith(("-c", "--bytes=")):
+            return True
+    return False
+
+
 def _tail_plus_start_arg(tokens: list[str]) -> int | None:
     for index, token in enumerate(tokens[1:], start=1):
-        if token == "-n" and index + 1 < len(tokens):
+        if token in {"-n", "--lines"} and index + 1 < len(tokens):
             value = _plus_int(tokens[index + 1])
             if value is not None:
                 return value
         if token.startswith("-n+"):
             value = _plus_int(token[2:])
+            if value is not None:
+                return value
+        if token.startswith("--lines=+"):
+            value = _plus_int(token.removeprefix("--lines="))
             if value is not None:
                 return value
         value = _plus_int(token)
@@ -557,7 +612,11 @@ def _split_top_level_segments(command: str) -> list[str]:
             index += 1
             continue
         operator = command[index : index + 2]
-        if char in {";", "\n"} or operator in {"&&", "||"}:
+        if (
+            char in {";", "\n"}
+            or operator in {"&&", "||"}
+            or _is_background_operator(command, index)
+        ):
             segment = "".join(current).strip()
             if segment:
                 segments.append(segment)
@@ -570,6 +629,14 @@ def _split_top_level_segments(command: str) -> list[str]:
     if segment:
         segments.append(segment)
     return segments
+
+
+def _is_background_operator(command: str, index: int) -> bool:
+    if command[index] != "&":
+        return False
+    if command[index : index + 2] in {"&&", "&>"}:
+        return False
+    return index == 0 or command[index - 1] != ">"
 
 
 def _unknown(command: str, reason: str) -> ParsedObservation:
