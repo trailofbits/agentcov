@@ -3,8 +3,8 @@
 ## Implementation Status
 
 This document is the design plan for the MVP. The current implementation ships
-the standalone Python CLI, Codex hook install/uninstall, Codex and Claude Code
-backfill, deterministic shell parsing for the supported MVP commands, LCOV,
+the standalone Python CLI, Codex hook install/uninstall, Codex, Claude Code, and
+Pi backfill, deterministic shell parsing for the supported MVP commands, LCOV,
 textual gcov, JSON, single-file HTML, import of `agent-coverage`-style JSON, and
 git-tracked inventory reporting.
 
@@ -13,7 +13,7 @@ Still planned after the release cut:
 - richer task/subagent filtering in the HTML report,
 - recency-specific heatmap mode,
 - optional user-level cross-repo storage,
-- additional agent transcript formats,
+- additional agent transcript formats beyond Codex, Claude Code, and Pi,
 - opt-in inferred range repair for unsupported command shapes.
 
 ## Goal
@@ -32,8 +32,8 @@ Initial product direction:
 - Ship as a standalone CLI first.
 - Provide `install-codex-hooks` to wire the CLI into Codex.
 - Implement the MVP in Python.
-- Focus live hooks on Codex. Support transcript backfill for Codex and Claude
-  Code, with Cursor and other agents later.
+- Focus live hooks on Codex. Support transcript backfill for Codex, Claude Code,
+  and Pi, with Cursor and other agents later.
 - Keep unresolved command handling conservative; do not use LLM-assisted
   inference by default.
 - Store repo-specific data in `.aicov/` by default, with optional user-level
@@ -200,8 +200,8 @@ events.
 
 Backfill should:
 
-- Read `~/.codex/sessions` and `~/.claude/projects` by session id or
-  transcript path.
+- Read `~/.codex/sessions`, `~/.claude/projects`, and `~/.pi/agent/sessions` by
+  session id or transcript path.
 - Extract user requests, visible commentary, checklist updates, subagents, and
   command/tool calls.
 - Reconstruct task/subagent ownership for each read event.
@@ -457,6 +457,7 @@ aicov hook pre-tool-use
 aicov hook stop
 aicov backfill --agent codex --session-id <id>
 aicov backfill --agent claude --session-id <id>
+aicov backfill --agent pi --session-id <id>
 aicov import agent-coverage.json
 aicov report --format lcov --counts full --out aicov.info
 aicov report --format lcov --counts binary --out aicov-binary.info
@@ -526,12 +527,12 @@ The first useful version should include:
 8. Git-tracked file inventory so never-read files appear in reports.
 9. Optional `.aicov.toml` config with default excludes.
 10. Single-file static HTML heatmap.
-11. Transcript backfill for Codex and Claude Code sessions.
+11. Transcript backfill for Codex, Claude Code, and Pi sessions.
 12. `aicov unread` or equivalent summary to direct audit attention to unread
     files and ranges.
 
 After that, add richer task filtering, recency/attention modes, import support,
-PreToolUse context, and support for non-Codex agents.
+PreToolUse context, and support for more non-Codex agents.
 
 ## Git Ignore Guidance
 

@@ -45,6 +45,7 @@ Backfill an existing session:
 ```sh
 aicov backfill --agent auto --session-id <session-id>
 aicov backfill --agent auto --path ~/.codex/sessions/<session>.jsonl
+aicov backfill --agent pi --path ~/.pi/agent/sessions/<encoded-cwd>/<session>.jsonl
 ```
 
 Generate reports:
@@ -66,7 +67,9 @@ genhtml aicov.info --output-directory coverage-html
 ## What It Captures
 
 - Codex hook payloads from `Bash`, `apply_patch`, and MCP tools.
-- Codex and Claude Code transcript backfill from session id or JSONL path.
+- Codex, Claude Code, and Pi transcript backfill from session id or JSONL path.
+  Pi child sessions linked by `parentSession` are included when backfilling a
+  Pi session path.
 - Common shell reads: `sed`, `head`, `tail`, `cat`, `awk`, and `nl|sed`.
 - `rg` and `grep` output as `search_seen`, separate from direct reads. Match
   lines and context lines are counted separately in the native JSON and HTML.

@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     backfill = subparsers.add_parser("backfill", help="Backfill events from an agent transcript")
     backfill.add_argument(
         "--agent",
-        choices=["codex", "claude", "auto"],
+        choices=["codex", "claude", "pi", "auto"],
         default="codex",
         help="Transcript format to parse",
     )
