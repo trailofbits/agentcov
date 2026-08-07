@@ -4,15 +4,15 @@ import io
 import json
 from pathlib import Path
 
-from aicov.hooks import (
+from agentcov.hooks import (
     events_from_payload,
     install_codex_hooks,
     read_hook_payload,
     run_stop,
     uninstall_codex_hooks,
 )
-from aicov.models import CoverageEvent, LineRange
-from aicov.storage import append_events
+from agentcov.models import CoverageEvent, LineRange
+from agentcov.storage import append_events
 
 
 def test_events_from_codex_bash_payload(tmp_path: Path) -> None:
@@ -47,6 +47,36 @@ def test_events_from_top_level_command_payload(tmp_path: Path) -> None:
     assert root == tmp_path
     assert len(events) == 1
     assert events[0].file == "app.py"
+    assert [(r.start, r.end) for r in events[0].ranges] == [(1, 2)]
+
+
+def test_events_from_read_payload_treat_offset_as_one_indexed(tmp_path: Path) -> None:
+    # Same input and range as the Claude and Pi backfill tests.
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    payload = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "app.py", "offset": 2, "limit": 2},
+        "cwd": str(tmp_path),
+    }
+
+    _, events = events_from_payload(payload)
+
+    assert len(events) == 1
+    assert events[0].file == "app.py"
+    assert [(r.start, r.end) for r in events[0].ranges] == [(2, 3)]
+
+
+def test_events_from_read_payload_without_offset_start_at_line_one(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    payload = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "app.py", "limit": 2},
+        "cwd": str(tmp_path),
+    }
+
+    _, events = events_from_payload(payload)
+
+    assert len(events) == 1
     assert [(r.start, r.end) for r in events[0].ranges] == [(1, 2)]
 
 
@@ -174,7 +204,7 @@ def test_install_and_uninstall_repo_hooks_preserves_unrelated_hooks(tmp_path: Pa
         for hook in entry.get("hooks", [])
     ]
     assert "echo unrelated" in commands
-    assert "aicov hook post-tool-use" in commands
+    assert "agentcov hook post-tool-use" in commands
 
     _, updated, changed = uninstall_codex_hooks(
         target="repo",
@@ -193,7 +223,7 @@ def test_install_and_uninstall_repo_hooks_preserves_unrelated_hooks(tmp_path: Pa
 
 def test_stop_writes_configured_auto_reports(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\n", encoding="utf-8")
-    (tmp_path / ".aicov.toml").write_text(
+    (tmp_path / ".agentcov.toml").write_text(
         'auto_reports = ["lcov", "html"]\n',
         encoding="utf-8",
     )
@@ -211,27 +241,27 @@ def test_stop_writes_configured_auto_reports(tmp_path: Path) -> None:
 
     coverage_path = run_stop({"cwd": str(tmp_path)})
 
-    assert coverage_path == tmp_path / ".aicov" / "coverage.json"
-    assert (tmp_path / ".aicov" / "reports" / "aicov.info").exists()
-    assert (tmp_path / ".aicov" / "reports" / "aicov.html").exists()
+    assert coverage_path == tmp_path / ".agentcov" / "coverage.json"
+    assert (tmp_path / ".agentcov" / "reports" / "agentcov.info").exists()
+    assert (tmp_path / ".agentcov" / "reports" / "agentcov.html").exists()
 
 
 def test_stop_keeps_coverage_json_when_auto_report_fails(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\n", encoding="utf-8")
-    (tmp_path / ".aicov.toml").write_text('auto_reports = ["lcov"]\n', encoding="utf-8")
+    (tmp_path / ".agentcov.toml").write_text('auto_reports = ["lcov"]\n', encoding="utf-8")
     append_events(
         [CoverageEvent(repo_root=str(tmp_path), file="app.py", ranges=[LineRange(1, 1)])],
         root=tmp_path,
     )
 
-    import aicov.report
+    import agentcov.report
 
     def fail_report(*args: object, **kwargs: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(aicov.report, "write_lcov", fail_report)
+    monkeypatch.setattr(agentcov.report, "write_lcov", fail_report)
 
     coverage_path = run_stop({"cwd": str(tmp_path)})
 
-    assert coverage_path == tmp_path / ".aicov" / "coverage.json"
+    assert coverage_path == tmp_path / ".agentcov" / "coverage.json"
     assert coverage_path.exists()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aicov.parser import parse_shell_command
+from agentcov.parser import parse_shell_command
 
 
 def _write_lines(path: Path, count: int) -> None:

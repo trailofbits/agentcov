@@ -10,16 +10,16 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from .aggregate import build_coverage
-from .config import AicovConfig, load_config
+from .config import AgentcovConfig, load_config
 from .git import find_repo_root
 from .models import CoverageEvent, ParsedObservation, now_iso
 from .parser import parse_direct_tool_input, parse_shell_command
 from .storage import append_events, load_events, storage_dir, write_coverage_json
 
-AICOV_HOOK_COMMANDS = {
-    "aicov hook post-tool-use",
-    "aicov hook pre-tool-use",
-    "aicov hook stop",
+AGENTCOV_HOOK_COMMANDS = {
+    "agentcov hook post-tool-use",
+    "agentcov hook pre-tool-use",
+    "agentcov hook stop",
 }
 
 
@@ -112,7 +112,7 @@ def codex_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "aicov hook post-tool-use",
+                            "command": "agentcov hook post-tool-use",
                             "timeout": 30,
                             "statusMessage": "Recording AI read coverage",
                         }
@@ -125,7 +125,7 @@ def codex_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "aicov hook pre-tool-use",
+                            "command": "agentcov hook pre-tool-use",
                             "timeout": 5,
                         }
                     ],
@@ -136,7 +136,7 @@ def codex_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "aicov hook stop",
+                            "command": "agentcov hook stop",
                             "timeout": 30,
                         }
                     ]
@@ -173,7 +173,7 @@ def uninstall_codex_hooks(
 ) -> tuple[Path, dict[str, Any], bool]:
     path = _hooks_file_path(target=target, cwd=cwd, force=force)
     existing = _read_json_file(path)
-    updated = _remove_aicov_hooks(existing)
+    updated = _remove_agentcov_hooks(existing)
     changed = updated != existing
     if not dry_run and changed:
         _backup_file(path)
@@ -182,7 +182,7 @@ def uninstall_codex_hooks(
     return path, updated, changed
 
 
-def _write_auto_reports(coverage: dict[str, Any], *, root: Path, config: AicovConfig) -> None:
+def _write_auto_reports(coverage: dict[str, Any], *, root: Path, config: AgentcovConfig) -> None:
     enabled = {name.lower() for name in config.auto_reports}
     if not enabled:
         return
@@ -193,7 +193,7 @@ def _write_auto_reports(coverage: dict[str, Any], *, root: Path, config: AicovCo
             if name == "lcov":
                 from .report import write_lcov
 
-                write_lcov(coverage, out=reports_dir / "aicov.info")
+                write_lcov(coverage, out=reports_dir / "agentcov.info")
             elif name == "gcov":
                 from .report import write_gcov
 
@@ -201,11 +201,11 @@ def _write_auto_reports(coverage: dict[str, Any], *, root: Path, config: AicovCo
             elif name == "html":
                 from .report import write_html
 
-                write_html(coverage, root=root, out=reports_dir / "aicov.html")
+                write_html(coverage, root=root, out=reports_dir / "agentcov.html")
             else:
-                print(f"aicov: warning: unknown auto_report {name!r}", file=sys.stderr)
+                print(f"agentcov: warning: unknown auto_report {name!r}", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001 - hook reports must stay best-effort.
-            print(f"aicov: warning: failed to write {name} report: {exc}", file=sys.stderr)
+            print(f"agentcov: warning: failed to write {name} report: {exc}", file=sys.stderr)
 
 
 def _merge_hooks(existing: dict[str, Any], addition: dict[str, Any]) -> dict[str, Any]:
@@ -219,7 +219,7 @@ def _merge_hooks(existing: dict[str, Any], addition: dict[str, Any]) -> dict[str
     return merged
 
 
-def _remove_aicov_hooks(existing: dict[str, Any]) -> dict[str, Any]:
+def _remove_agentcov_hooks(existing: dict[str, Any]) -> dict[str, Any]:
     updated = json.loads(json.dumps(existing))
     hooks = updated.get("hooks")
     if not isinstance(hooks, dict):
@@ -242,7 +242,7 @@ def _remove_aicov_hooks(existing: dict[str, Any]) -> dict[str, Any]:
                 for hook in hook_list
                 if not (
                     isinstance(hook, dict)
-                    and str(hook.get("command", "")).strip() in AICOV_HOOK_COMMANDS
+                    and str(hook.get("command", "")).strip() in AGENTCOV_HOOK_COMMANDS
                 )
             ]
             if kept_hooks:
@@ -356,7 +356,9 @@ def _is_direct_read_tool(tool_name: object, tool_input: object) -> bool:
     return bool(read_markers.intersection(name_parts) or read_markers.intersection(action_tokens))
 
 
-def _has_path_input(tool_input: dict[str, Any]) -> bool:
+def _has_path_input(tool_input: object) -> bool:
+    if not isinstance(tool_input, dict):
+        return False
     path_keys = ("path", "file", "file_path", "filename")
     if any(isinstance(tool_input.get(key), str) for key in path_keys):
         return True

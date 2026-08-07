@@ -32,15 +32,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args) or 0)
     except Exception as exc:  # noqa: BLE001 - CLI should report cleanly.
-        if os.getenv("AICOV_DEBUG"):
+        if os.getenv("AGENTCOV_DEBUG"):
             traceback.print_exc()
         else:
-            print(f"aicov: error: {type(exc).__name__}: {exc}", file=sys.stderr)
+            print(f"agentcov: error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aicov")
+    parser = argparse.ArgumentParser(prog="agentcov")
     parser.add_argument("--root", type=Path, help="Repository root or working directory")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     install.set_defaults(func=_cmd_install)
 
-    uninstall = subparsers.add_parser("uninstall-codex-hooks", help="Remove aicov Codex hooks")
+    uninstall = subparsers.add_parser("uninstall-codex-hooks", help="Remove agentcov Codex hooks")
     _add_target_flags(uninstall)
     uninstall.add_argument("--dry-run", action="store_true", help="Print updated hooks JSON only")
     uninstall.add_argument(
@@ -81,7 +81,9 @@ def build_parser() -> argparse.ArgumentParser:
     report.set_defaults(func=_cmd_report)
 
     html = subparsers.add_parser("html", help="Generate a self-contained HTML report")
-    html.add_argument("--out", type=Path, default=Path("aicov-html"), help="HTML file or directory")
+    html.add_argument(
+        "--out", type=Path, default=Path("agentcov-html"), help="HTML file or directory"
+    )
     html.set_defaults(func=_cmd_html)
 
     summary = subparsers.add_parser("summary", help="Print read coverage summary")
@@ -143,7 +145,7 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(json.dumps(updated, indent=2, sort_keys=True))
     else:
-        print(f"{path}: {'updated' if changed else 'no aicov hooks found'}")
+        print(f"{path}: {'updated' if changed else 'no agentcov hooks found'}")
     return 0
 
 
@@ -152,7 +154,7 @@ def _cmd_hook_post_tool_use(args: argparse.Namespace) -> int:
     payload = read_hook_payload()
     count = run_post_tool_use(payload)
     if count:
-        print(f"recorded {count} aicov event(s)", file=sys.stderr)
+        print(f"recorded {count} agentcov event(s)", file=sys.stderr)
     return 0
 
 
@@ -180,7 +182,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
         out = _resolve_output(root, args.out) if args.out else None
         path = write_coverage_json(coverage, root=root, path=out)
     elif args.format == "lcov":
-        out = args.out or Path("aicov.info")
+        out = args.out or Path("agentcov.info")
         path = write_lcov(coverage, out=_resolve_output(root, out), counts=args.counts)
     else:
         out_dir = args.out_dir or Path("coverage-gcov")

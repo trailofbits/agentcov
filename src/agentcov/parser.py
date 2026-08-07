@@ -76,8 +76,9 @@ def parse_direct_tool_input(
     end = _as_int(tool_input.get("end_line") or tool_input.get("line_end"))
     offset = _as_int(tool_input.get("offset"))
     limit = _as_int(tool_input.get("limit"))
+    # `offset` is the first line to read, not a count of lines to skip.
     if start is None and offset is not None:
-        start = max(1, offset + 1)
+        start = max(1, offset)
     if start is None and limit is not None:
         start = 1
     if end is None and start is not None and limit is not None:

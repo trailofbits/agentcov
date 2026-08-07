@@ -6,7 +6,7 @@ import subprocess
 from codecs import getincrementaldecoder
 from pathlib import Path
 
-from .config import AicovConfig, is_excluded
+from .config import AgentcovConfig, is_excluded
 
 TEXT_SAMPLE_BYTES = 8192
 
@@ -46,7 +46,7 @@ def git_metadata(root: Path) -> dict[str, object]:
     }
 
 
-def list_project_files(root: Path, config: AicovConfig) -> list[str]:
+def list_project_files(root: Path, config: AgentcovConfig) -> list[str]:
     tracked = _git_tracked_files(root)
     if tracked is None:
         tracked = _filesystem_files(root, config)
@@ -67,7 +67,7 @@ def _git_tracked_files(root: Path) -> list[str] | None:
     return [item for item in out.split("\0") if item]
 
 
-def _filesystem_files(root: Path, config: AicovConfig) -> list[str]:
+def _filesystem_files(root: Path, config: AgentcovConfig) -> list[str]:
     files: list[str] = []
     for current, dirs, filenames in os.walk(root):
         current_path = Path(current)

@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from aicov.config import AicovConfig, is_excluded, load_config
-from aicov.git import is_text_file
-from aicov.models import CoverageEvent
-from aicov.paths import display_command, normalize_file_path
+from agentcov.config import AgentcovConfig, is_excluded, load_config
+from agentcov.git import is_text_file
+from agentcov.models import CoverageEvent
+from agentcov.paths import display_command, normalize_file_path
 
 
 def test_normalize_file_path_rejects_paths_outside_root(tmp_path: Path) -> None:
@@ -32,7 +32,9 @@ def test_normalize_file_path_resolves_absolute_paths_under_root(tmp_path: Path) 
 
 
 def test_exclude_matching_uses_exact_glob_and_directory_semantics() -> None:
-    config = AicovConfig(exclude=("test", "*.min.js", "node_modules/", "/rootonly/", "/root.txt"))
+    config = AgentcovConfig(
+        exclude=("test", "*.min.js", "node_modules/", "/rootonly/", "/root.txt")
+    )
 
     assert is_excluded("test", config)
     assert is_excluded("nested/test", config)
@@ -46,15 +48,15 @@ def test_exclude_matching_uses_exact_glob_and_directory_semantics() -> None:
     assert not is_excluded("nested/root.txt", config)
 
 
-def test_load_config_rejects_non_table_aicov_section(tmp_path: Path) -> None:
-    (tmp_path / ".aicov.toml").write_text('aicov = "bad"\n', encoding="utf-8")
+def test_load_config_rejects_non_table_agentcov_section(tmp_path: Path) -> None:
+    (tmp_path / ".agentcov.toml").write_text('agentcov = "bad"\n', encoding="utf-8")
 
     with pytest.raises(ValueError, match="config must be a table"):
         load_config(tmp_path)
 
 
 def test_load_config_rejects_scalar_list_fields(tmp_path: Path) -> None:
-    (tmp_path / ".aicov.toml").write_text('exclude = "*.min.js"\n', encoding="utf-8")
+    (tmp_path / ".agentcov.toml").write_text('exclude = "*.min.js"\n', encoding="utf-8")
 
     with pytest.raises(ValueError, match="exclude must be a list"):
         load_config(tmp_path)

@@ -93,8 +93,6 @@ def _matching_claude_result(
 def _unpaired_claude_tool_input(tool_name: object, tool_input: object) -> object | None:
     if tool_name not in _READ_TOOL_NAMES:
         return tool_input
-    if not isinstance(tool_input, dict):
-        return None
     return tool_input if _has_bounded_read_input(tool_input) else None
 
 
@@ -103,18 +101,21 @@ def _claude_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for record in records:
         normalized.append(record)
         data = record.get("data")
-        child = data.get("message") if isinstance(data, dict) else None
-        if isinstance(child, dict):
-            merged = dict(record)
-            merged.update(child)
-            for key in ("cwd", "sessionId", "gitBranch", "version", "agentId", "slug"):
-                if key not in merged and key in record:
-                    merged[key] = record[key]
-                if key not in merged and key in data:
-                    merged[key] = data[key]
-            if "prompt" not in merged and "prompt" in data:
-                merged["prompt"] = data["prompt"]
-            normalized.append(merged)
+        if not isinstance(data, dict):
+            continue
+        child = data.get("message")
+        if not isinstance(child, dict):
+            continue
+        merged = dict(record)
+        merged.update(child)
+        for key in ("cwd", "sessionId", "gitBranch", "version", "agentId", "slug"):
+            if key not in merged and key in record:
+                merged[key] = record[key]
+            if key not in merged and key in data:
+                merged[key] = data[key]
+        if "prompt" not in merged and "prompt" in data:
+            merged["prompt"] = data["prompt"]
+        normalized.append(merged)
     return normalized
 
 
@@ -188,18 +189,20 @@ def _claude_message_content(record: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _claude_tool_input(tool_name: str | None, tool_input: object) -> object:
-    if tool_name in _READ_TOOL_NAMES and isinstance(tool_input, dict):
-        normalized = dict(tool_input)
-        offset = normalized.pop("offset", None)
-        if offset is not None and "start_line" not in normalized and "line_start" not in normalized:
-            normalized["start_line"] = offset
-        return normalized
-    if tool_name == "Grep" and isinstance(tool_input, dict):
+    if tool_name not in _READ_TOOL_NAMES and tool_name != "Grep":
+        return tool_input
+    if not isinstance(tool_input, dict):
+        return tool_input
+    normalized = dict(tool_input)
+    if tool_name == "Grep":
         return {
-            "command": _claude_grep_command(tool_input),
-            "_aicov_grep_path": _string(tool_input.get("path")),
+            "command": _claude_grep_command(normalized),
+            "_agentcov_grep_path": _string(normalized.get("path")),
         }
-    return tool_input
+    offset = normalized.pop("offset", None)
+    if offset is not None and "start_line" not in normalized and "line_start" not in normalized:
+        normalized["start_line"] = offset
+    return normalized
 
 
 def _cap_claude_read_input(
@@ -226,7 +229,9 @@ def _cap_claude_read_input(
     return normalized
 
 
-def _has_bounded_read_input(tool_input: dict[str, Any]) -> bool:
+def _has_bounded_read_input(tool_input: object) -> bool:
+    if not isinstance(tool_input, dict):
+        return False
     return any(tool_input.get(key) is not None for key in ("end_line", "line_end", "limit"))
 
 
@@ -236,7 +241,7 @@ def _normalize_claude_grep_response(payload: dict[str, Any], result: object) -> 
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
         return result
-    raw_path = _string(tool_input.get("_aicov_grep_path"))
+    raw_path = _string(tool_input.get("_agentcov_grep_path"))
     if not raw_path:
         return result
     if not _looks_like_single_file_path(raw_path, _string(payload.get("cwd"))):
@@ -267,8 +272,8 @@ def _looks_like_single_file_path(raw_path: str, cwd: str | None) -> bool:
 
 
 def _claude_read_result_bounds(result: object) -> tuple[int, int] | None:
-    file_result = _claude_read_file_result(result)
-    if file_result:
+    file_result = result.get("file") if isinstance(result, dict) else None
+    if isinstance(file_result, dict):
         start = _as_int(file_result.get("startLine")) or 1
         line_count = _as_int(file_result.get("numLines"))
         if line_count is None:
@@ -281,19 +286,10 @@ def _claude_read_result_bounds(result: object) -> tuple[int, int] | None:
 
 
 def _claude_read_result_path(result: object) -> str | None:
-    file_result = _claude_read_file_result(result)
-    if not file_result:
+    file_result = result.get("file") if isinstance(result, dict) else None
+    if not isinstance(file_result, dict):
         return None
     return _string(file_result.get("filePath"))
-
-
-def _claude_read_file_result(result: object) -> dict[str, Any] | None:
-    if not isinstance(result, dict):
-        return None
-    file_result = result.get("file")
-    if isinstance(file_result, dict):
-        return file_result
-    return None
 
 
 def _numbered_result_bounds(text: str) -> tuple[int, int] | None:
