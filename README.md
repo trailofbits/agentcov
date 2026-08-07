@@ -1,5 +1,10 @@
 # agentcov
 
+[![CI](https://img.shields.io/github/actions/workflow/status/trailofbits/agentcov/ci.yml?event=merge_group&label=CI)](https://github.com/trailofbits/agentcov/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/agentcov)](https://pypi.org/project/agentcov/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/agentcov/)
+[![License](https://img.shields.io/pypi/l/agentcov)](LICENSE)
+
 `agentcov` tracks which lines in a repository were read by AI coding agents. It
 maps AI read counts onto LCOV and textual `.gcov` reports, and it also writes a
 native JSON format with per-line read counts, search hits, commands, and task
