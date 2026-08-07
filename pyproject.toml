@@ -1,6 +1,6 @@
 [project]
 name = "agentcov"
-version = "0.0.0"
+version = "0.1.0"
 description = "AI-agent read coverage for source files, with LCOV and gcov-compatible reports."
 readme = "README.md"
 requires-python = ">=3.11"
