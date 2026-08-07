@@ -50,6 +50,36 @@ def test_events_from_top_level_command_payload(tmp_path: Path) -> None:
     assert [(r.start, r.end) for r in events[0].ranges] == [(1, 2)]
 
 
+def test_events_from_read_payload_treat_offset_as_one_indexed(tmp_path: Path) -> None:
+    # Same input and range as the Claude and Pi backfill tests.
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    payload = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "app.py", "offset": 2, "limit": 2},
+        "cwd": str(tmp_path),
+    }
+
+    _, events = events_from_payload(payload)
+
+    assert len(events) == 1
+    assert events[0].file == "app.py"
+    assert [(r.start, r.end) for r in events[0].ranges] == [(2, 3)]
+
+
+def test_events_from_read_payload_without_offset_start_at_line_one(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    payload = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "app.py", "limit": 2},
+        "cwd": str(tmp_path),
+    }
+
+    _, events = events_from_payload(payload)
+
+    assert len(events) == 1
+    assert [(r.start, r.end) for r in events[0].ranges] == [(1, 2)]
+
+
 def test_write_only_mcp_path_payload_is_not_counted_as_read(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
     payload = {
