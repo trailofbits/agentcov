@@ -1,6 +1,6 @@
 [project]
 name = "agentcov"
-version = "0.1.0"
+version = "0.0.0"
 description = "AI-agent read coverage for source files, with LCOV and gcov-compatible reports."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,8 +19,8 @@ Changelog = "https://github.com/trailofbits/agentcov/blob/main/CHANGELOG.md"
 agentcov = "agentcov.cli:main"
 
 [build-system]
-requires = ["hatchling>=1.27.0"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [

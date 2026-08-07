@@ -153,8 +153,13 @@ should start.
 ## Release Process
 
 Releases are automated end to end by GitHub Actions. Do not bump the version in
-`pyproject.toml`/`uv.lock` by hand, create `v*` tags, or publish to PyPI
-manually — the workflows own all of that.
+`pyproject.toml`/`uv.lock` by hand, create `release/*` branches or `v*` tags, or
+publish to PyPI manually — the workflows own all of that.
+
+The version in `pyproject.toml` on `main` is the one that was last released, not
+the one being prepared, which is why it starts at `0.0.0`. `prepare release`
+bumps it, and fails if the bump leaves the version files unchanged. Setting it
+ahead of time to the version you want is what breaks that check.
 
 To cut a release:
 
