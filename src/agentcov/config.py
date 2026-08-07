@@ -1,18 +1,13 @@
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore[no-redef]
-
-
 DEFAULT_EXCLUDES = [
-    ".aicov/",
+    ".agentcov/",
     "node_modules/",
     "vendor/",
     "dist/",
@@ -25,34 +20,34 @@ DEFAULT_EXCLUDES = [
 
 
 @dataclass(frozen=True)
-class AicovConfig:
-    storage_dir: str = ".aicov"
+class AgentcovConfig:
+    storage_dir: str = ".agentcov"
     exclude: tuple[str, ...] = field(default_factory=lambda: tuple(DEFAULT_EXCLUDES))
     include_lockfiles: bool = True
     auto_reports: tuple[str, ...] = ("json",)
 
 
-def load_config(root: Path | str | None = None) -> AicovConfig:
+def load_config(root: Path | str | None = None) -> AgentcovConfig:
     base = Path(root or ".").resolve()
-    path = base / ".aicov.toml"
+    path = base / ".agentcov.toml"
     if not path.exists():
-        return AicovConfig()
+        return AgentcovConfig()
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    raw_section = data.get("aicov", data)
+    raw_section = data.get("agentcov", data)
     if not isinstance(raw_section, dict):
-        raise ValueError(f"{path}: [aicov] config must be a table")
+        raise ValueError(f"{path}: [agentcov] config must be a table")
     section: dict[str, Any] = raw_section
     excludes = _string_tuple(section.get("exclude", DEFAULT_EXCLUDES), field_name="exclude")
     auto_reports = _string_tuple(section.get("auto_reports", ("json",)), field_name="auto_reports")
-    return AicovConfig(
-        storage_dir=str(section.get("storage_dir", ".aicov")),
+    return AgentcovConfig(
+        storage_dir=str(section.get("storage_dir", ".agentcov")),
         exclude=excludes,
         include_lockfiles=bool(section.get("include_lockfiles", True)),
         auto_reports=auto_reports,
     )
 
 
-def is_excluded(relpath: str, config: AicovConfig) -> bool:
+def is_excluded(relpath: str, config: AgentcovConfig) -> bool:
     normalized = _normalize_relpath(relpath)
     storage_dir = config.storage_dir.strip().replace("\\", "/").strip("/")
     storage_patterns = (f"{storage_dir}/",) if storage_dir else ()

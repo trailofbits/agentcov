@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .config import AicovConfig, is_excluded, load_config
+from .config import AgentcovConfig, is_excluded, load_config
 from .git import file_line_count, git_metadata, inventory_hash, list_project_files
 from .models import Confidence, CoverageEvent, LineRange
 from .paths import display_command
@@ -124,7 +124,7 @@ def build_coverage(
     *,
     root: Path,
     events: list[CoverageEvent],
-    config: AicovConfig | None = None,
+    config: AgentcovConfig | None = None,
 ) -> dict[str, Any]:
     cfg = config or load_config(root)
     inventory = list_project_files(root, cfg)
@@ -195,7 +195,7 @@ def build_coverage(
     sessions = _session_rollups(events)
     return {
         "schema_version": 1,
-        "tool": "aicov",
+        "tool": "agentcov",
         "git": {
             **git_metadata(root),
             "tracked_file_count": len(inventory),
@@ -451,7 +451,7 @@ def _source_path(root: Path, rel: str) -> Path:
     return path if path.is_absolute() else root / path
 
 
-def _event_file_key(raw: str | None, *, root: Path, config: AicovConfig) -> str | None:
+def _event_file_key(raw: str | None, *, root: Path, config: AgentcovConfig) -> str | None:
     if not raw:
         return None
     root_resolved = root.resolve()

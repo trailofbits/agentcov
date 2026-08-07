@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from aicov.aggregate import build_coverage
-from aicov.cli import _append_events_by_root
-from aicov.config import load_config
-from aicov.importers import import_agent_coverage
-from aicov.models import CoverageEvent, LineRange
-from aicov.parser import parse_shell_command
-from aicov.report import unread_text, write_gcov, write_html, write_lcov
-from aicov.storage import append_events, load_events
+from agentcov.aggregate import build_coverage
+from agentcov.cli import _append_events_by_root
+from agentcov.config import load_config
+from agentcov.importers import import_agent_coverage
+from agentcov.models import CoverageEvent, LineRange
+from agentcov.parser import parse_shell_command
+from agentcov.report import unread_text, write_gcov, write_html, write_lcov
+from agentcov.storage import append_events, load_events
 
 
 def _git(command: list[str], cwd: Path) -> None:
@@ -40,7 +40,7 @@ def test_lcov_includes_never_read_git_tracked_files(tmp_path: Path) -> None:
             )
         ],
     )
-    out = write_lcov(coverage, out=tmp_path / "aicov.info", counts="full")
+    out = write_lcov(coverage, out=tmp_path / "agentcov.info", counts="full")
     text = out.read_text(encoding="utf-8")
 
     assert "SF:a.py\nDA:1,0\nDA:2,1\nDA:3,0\nLH:1\nLF:3" in text
@@ -168,7 +168,7 @@ def test_adjacent_search_context_and_hit_lines_keep_distinct_counts(tmp_path: Pa
     ]
 
 
-def test_fallback_inventory_excludes_aicov_storage(tmp_path: Path) -> None:
+def test_fallback_inventory_excludes_agentcov_storage(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("one\n", encoding="utf-8")
     (tmp_path / "packages" / "foo" / "node_modules").mkdir(parents=True)
@@ -177,9 +177,9 @@ def test_fallback_inventory_excludes_aicov_storage(tmp_path: Path) -> None:
     )
     (tmp_path / "nested" / ".git").mkdir(parents=True)
     (tmp_path / "nested" / ".git" / "config").write_text("ignored\n", encoding="utf-8")
-    (tmp_path / ".aicov").mkdir()
-    (tmp_path / ".aicov" / "coverage.json").write_text("{}\n", encoding="utf-8")
-    (tmp_path / ".aicov" / "events.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / ".agentcov").mkdir()
+    (tmp_path / ".agentcov" / "coverage.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / ".agentcov" / "events.jsonl").write_text("{}\n", encoding="utf-8")
 
     coverage = build_coverage(root=tmp_path, config=load_config(tmp_path), events=[])
 
@@ -189,9 +189,9 @@ def test_fallback_inventory_excludes_aicov_storage(tmp_path: Path) -> None:
 def test_config_can_exclude_lockfiles_from_git_inventory(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\n", encoding="utf-8")
     (tmp_path / "package-lock.json").write_text("{}\n", encoding="utf-8")
-    (tmp_path / ".aicov.toml").write_text("include_lockfiles = false\n", encoding="utf-8")
+    (tmp_path / ".agentcov.toml").write_text("include_lockfiles = false\n", encoding="utf-8")
     _git(["init"], tmp_path)
-    _git(["add", "app.py", "package-lock.json", ".aicov.toml"], tmp_path)
+    _git(["add", "app.py", "package-lock.json", ".agentcov.toml"], tmp_path)
 
     coverage = build_coverage(root=tmp_path, config=load_config(tmp_path), events=[])
 
@@ -314,7 +314,7 @@ def test_html_includes_unknown_events_and_attribution_payload(tmp_path: Path) ->
         ],
     )
 
-    out = write_html(coverage, root=tmp_path, out=tmp_path / "aicov.html")
+    out = write_html(coverage, root=tmp_path, out=tmp_path / "agentcov.html")
     text = out.read_text(encoding="utf-8")
 
     assert "Unknown Events" in text
@@ -336,7 +336,7 @@ def test_json_report_out_is_resolved_against_root(tmp_path: Path) -> None:
         [
             sys.executable,
             "-m",
-            "aicov",
+            "agentcov",
             "--root",
             str(repo),
             "report",
@@ -360,19 +360,19 @@ def test_json_report_default_uses_configured_storage_dir(tmp_path: Path) -> None
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "a.py").write_text("one\n", encoding="utf-8")
-    (repo / ".aicov.toml").write_text('storage_dir = ".custom-aicov"\n', encoding="utf-8")
+    (repo / ".agentcov.toml").write_text('storage_dir = ".custom-agentcov"\n', encoding="utf-8")
     _git(["init"], repo)
-    _git(["add", "a.py", ".aicov.toml"], repo)
+    _git(["add", "a.py", ".agentcov.toml"], repo)
 
     completed = subprocess.run(
-        [sys.executable, "-m", "aicov", "--root", str(repo), "report", "--format", "json"],
+        [sys.executable, "-m", "agentcov", "--root", str(repo), "report", "--format", "json"],
         check=True,
         capture_output=True,
         text=True,
     )
 
-    assert completed.stdout.strip() == str(repo / ".custom-aicov" / "coverage.json")
-    assert (repo / ".custom-aicov" / "coverage.json").exists()
+    assert completed.stdout.strip() == str(repo / ".custom-agentcov" / "coverage.json")
+    assert (repo / ".custom-agentcov" / "coverage.json").exists()
 
 
 def test_report_rejects_mismatched_output_flags(tmp_path: Path) -> None:
@@ -384,14 +384,14 @@ def test_report_rejects_mismatched_output_flags(tmp_path: Path) -> None:
         [
             sys.executable,
             "-m",
-            "aicov",
+            "agentcov",
             "--root",
             str(tmp_path),
             "report",
             "--format",
             "gcov",
             "--out",
-            "aicov.info",
+            "agentcov.info",
         ],
         capture_output=True,
         text=True,
@@ -435,7 +435,7 @@ def test_append_events_keeps_duplicate_live_events_without_dedupe(tmp_path: Path
 
 
 def test_load_events_rejects_invalid_kind(tmp_path: Path) -> None:
-    event_dir = tmp_path / ".aicov"
+    event_dir = tmp_path / ".agentcov"
     event_dir.mkdir()
     (event_dir / "events.jsonl").write_text('{"kind":"bogus","ranges":[]}\n', encoding="utf-8")
 

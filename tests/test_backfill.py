@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from aicov.backfill import (
+from agentcov.backfill import (
     backfill_claude_session,
     backfill_codex_session,
     backfill_pi_session,

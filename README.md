@@ -1,6 +1,6 @@
-# aicov
+# agentcov
 
-`aicov` tracks which lines in a repository were read by AI coding agents. It
+`agentcov` tracks which lines in a repository were read by AI coding agents. It
 maps AI read counts onto LCOV and textual `.gcov` reports, and it also writes a
 native JSON format with per-line read counts, search hits, commands, and task
 metadata.
@@ -16,14 +16,14 @@ uv tool install .
 From a published package, use the same shape:
 
 ```sh
-uv tool install aicov
+uv tool install agentcov
 ```
 
 For local development:
 
 ```sh
 uv sync --dev
-uv run aicov --help
+uv run agentcov --help
 ```
 
 ## Quickstart
@@ -31,37 +31,46 @@ uv run aicov --help
 Install Codex hooks:
 
 ```sh
-aicov install-codex-hooks --user
+agentcov install-codex-hooks --user
 ```
 
 For a repo-local install instead:
 
 ```sh
-aicov install-codex-hooks --repo
+agentcov install-codex-hooks --repo
 ```
 
 Backfill an existing session:
 
 ```sh
-aicov backfill --agent auto --session-id <session-id>
-aicov backfill --agent auto --path ~/.codex/sessions/<session>.jsonl
-aicov backfill --agent pi --path ~/.pi/agent/sessions/<encoded-cwd>/<session>.jsonl
+agentcov backfill --agent auto --session-id <session-id>
+agentcov backfill --agent auto --path ~/.codex/sessions/<session>.jsonl
+agentcov backfill --agent pi --path ~/.pi/agent/sessions/<encoded-cwd>/<session>.jsonl
 ```
+
+Import ranges recorded by another tool:
+
+```sh
+agentcov import agent-coverage.json
+```
+
+`import` accepts `agent-coverage`-style hierarchical JSON, or a plain array of
+`{"cmd": "...", "ranges": ["src/app.ts:1:20"]}` entries.
 
 Generate reports:
 
 ```sh
-aicov report --format lcov --counts full --out aicov.info
-aicov report --format gcov --counts binary --out-dir coverage-gcov
-aicov html --out aicov.html
-aicov summary
-aicov unread --limit 20
+agentcov report --format lcov --counts full --out agentcov.info
+agentcov report --format gcov --counts binary --out-dir coverage-gcov
+agentcov html --out agentcov.html
+agentcov summary
+agentcov unread --limit 20
 ```
 
 Render LCOV with standard tooling:
 
 ```sh
-genhtml aicov.info --output-directory coverage-html
+genhtml agentcov.info --output-directory coverage-html
 ```
 
 ## What It Captures
@@ -81,11 +90,11 @@ being guessed as full-file reads.
 
 ## Outputs
 
-- `.aicov/events.jsonl`: append-only observed read events.
-- `.aicov/coverage.json`: native per-file and per-line coverage data.
-- `aicov.info`: LCOV tracefile compatible with `genhtml`.
+- `.agentcov/events.jsonl`: append-only observed read events.
+- `.agentcov/coverage.json`: native per-file and per-line coverage data.
+- `agentcov.info`: LCOV tracefile compatible with `genhtml`.
 - `coverage-gcov/*.gcov`: textual gcov-style files.
-- `aicov.html`: self-contained heatmap report.
+- `agentcov.html`: self-contained heatmap report.
 
 `--counts full` writes observed read counts into LCOV/gcov output. `--counts
 binary` writes `1` for read lines and `0` for unread lines.
@@ -97,31 +106,31 @@ commands can be audited instead of silently disappearing.
 
 ## Configuration
 
-Create `.aicov.toml` at the repo root when defaults need adjustment:
+Create `.agentcov.toml` at the repo root when defaults need adjustment:
 
 ```toml
-storage_dir = ".aicov"
-exclude = [".aicov/", "node_modules/", "vendor/", "dist/", "build/", ".git/"]
+storage_dir = ".agentcov"
+exclude = [".agentcov/", "node_modules/", "vendor/", "dist/", "build/", ".git/"]
 include_lockfiles = true
 auto_reports = ["json"]
 ```
 
 `auto_reports` controls extra reports written on Codex `Stop`. JSON coverage is
 always refreshed; add `lcov`, `gcov`, or `html` to write shareable reports under
-`.aicov/reports/`.
+`.agentcov/reports/`.
 
 Recommended local ignore rules:
 
 ```gitignore
-.aicov/
+.agentcov/
 ```
 
-Commit or archive `.aicov/coverage.json`, LCOV, gcov, or HTML outputs only when
+Commit or archive `.agentcov/coverage.json`, LCOV, gcov, or HTML outputs only when
 you want a durable audit artifact.
 
 ## Privacy
 
-By default, `aicov` stores commands, paths, line ranges, timestamps, session and
+By default, `agentcov` stores commands, paths, line ranges, timestamps, session and
 tool ids, agent names, and task attribution. Backfilled transcripts may include
 the agent's prompt or task label in `task_path` so reports can explain why a
 line was inspected. It does not store raw tool output or source snippets in the
@@ -131,10 +140,26 @@ The native coverage JSON and HTML report include attribution from the event log.
 The HTML report also embeds source lines because it is a source viewer; share
 those files with the same care as the repository and transcript metadata.
 
+## Roadmap
+
+Not shipped yet:
+
+- Richer HTML views: task and subagent filtering, a recency mode, and a
+  directory treemap.
+- Optional user-level storage, so coverage history can span repositories.
+- Transcript backfill for agents beyond Codex, Claude Code, and Pi.
+- Opt-in range repair for command shapes that are currently recorded as unknown,
+  with inferred ranges marked as lower confidence.
+
 ## Development
 
 ```sh
-uv run pytest
-uv run ruff check .
-uv run ruff format .
+make dev      # install the dev dependency group
+make test     # pytest
+make lint     # ruff format --check, ruff check, ty check
+make format   # ruff format and ruff check --fix
+make check    # lint and test
 ```
+
+See [AGENTS.md](AGENTS.md) for the module layout, contribution notes, and the
+release process.

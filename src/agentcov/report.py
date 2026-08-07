@@ -13,7 +13,7 @@ def write_lcov(
     *,
     out: Path,
     counts: str = "full",
-    test_name: str = "aicov",
+    test_name: str = "agentcov",
 ) -> Path:
     files = coverage_files(coverage)
     lines: list[str] = []
@@ -120,7 +120,7 @@ def _html_data(coverage: dict[str, Any], *, root: Path) -> dict[str, Any]:
 def _render_html(data: dict[str, Any]) -> str:
     json_data = json.dumps(data, separators=(",", ":"))
     escaped_json = json_data.replace("</", "<\\/")
-    return HTML_TEMPLATE.replace("__AICOV_DATA__", escaped_json)
+    return HTML_TEMPLATE.replace("__AGENTCOV_DATA__", escaped_json)
 
 
 HTML_STYLE = """
@@ -355,7 +355,7 @@ main {
 HTML_BODY = """
 <header>
   <div>
-    <h1>aicov report</h1>
+    <h1>agentcov report</h1>
     <div class="metrics" id="metrics"></div>
   </div>
   <div class="metrics" id="git"></div>
@@ -387,7 +387,7 @@ HTML_BODY = """
     <div id="inspector" class="inspector">Line details appear here.</div>
   </main>
 </div>
-<script id="coverage-data" type="application/json">__AICOV_DATA__</script>
+<script id="coverage-data" type="application/json">__AGENTCOV_DATA__</script>
 """.strip()
 
 
@@ -594,7 +594,7 @@ HTML_TEMPLATE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>aicov report</title>
+<title>agentcov report</title>
 <style>
 {HTML_STYLE}
 </style>

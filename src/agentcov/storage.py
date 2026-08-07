@@ -6,30 +6,26 @@ import os
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
+from typing import IO
 
-from .config import AicovConfig, load_config
+from .config import AgentcovConfig, load_config
 from .git import find_repo_root
 from .models import CoverageEvent, coverage_event_identity
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - non-POSIX fallback
-    fcntl = None  # type: ignore[assignment]
 
 EVENTS_FILE = "events.jsonl"
 COVERAGE_FILE = "coverage.json"
 
 
-def storage_dir(root: Path, config: AicovConfig | None = None) -> Path:
+def storage_dir(root: Path, config: AgentcovConfig | None = None) -> Path:
     cfg = config or load_config(root)
     return root / cfg.storage_dir
 
 
-def events_path(root: Path, config: AicovConfig | None = None) -> Path:
+def events_path(root: Path, config: AgentcovConfig | None = None) -> Path:
     return storage_dir(root, config) / EVENTS_FILE
 
 
-def coverage_path(root: Path, config: AicovConfig | None = None) -> Path:
+def coverage_path(root: Path, config: AgentcovConfig | None = None) -> Path:
     return storage_dir(root, config) / COVERAGE_FILE
 
 
@@ -37,7 +33,7 @@ def append_events(
     events: Iterable[CoverageEvent],
     *,
     root: Path | None = None,
-    config: AicovConfig | None = None,
+    config: AgentcovConfig | None = None,
     dedupe: bool = False,
 ) -> int:
     repo_root = root or find_repo_root()
@@ -69,7 +65,7 @@ def append_events(
 def load_events(
     *,
     root: Path | None = None,
-    config: AicovConfig | None = None,
+    config: AgentcovConfig | None = None,
     path: Path | None = None,
 ) -> list[CoverageEvent]:
     repo_root = root or find_repo_root()
@@ -102,7 +98,7 @@ def write_coverage_json(
     coverage: dict[str, object],
     *,
     root: Path | None = None,
-    config: AicovConfig | None = None,
+    config: AgentcovConfig | None = None,
     path: Path | None = None,
 ) -> Path:
     repo_root = root or find_repo_root()
@@ -137,9 +133,12 @@ def write_coverage_json(
     return out
 
 
-def _lock_file(file: object) -> None:
-    if fcntl is not None:
-        fcntl.flock(file.fileno(), fcntl.LOCK_EX)
+def _lock_file(file: IO[str]) -> None:
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - non-POSIX fallback
+        return
+    fcntl.flock(file.fileno(), fcntl.LOCK_EX)
 
 
 def _fsync_parent(path: Path) -> None:

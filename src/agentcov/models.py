@@ -124,10 +124,14 @@ def _ranges_from_json(value: object, *, default_weight: object) -> list[LineRang
             raise ValueError(f"invalid range item: {item!r}")
         if "start" not in item or "end" not in item:
             raise ValueError(f"range missing start/end: {item!r}")
+        start = item.get("start")
+        end = item.get("end")
+        if not isinstance(start, int | float | str) or not isinstance(end, int | float | str):
+            raise TypeError(f"range start/end must be numbers: {item!r}")
         ranges.append(
             LineRange(
-                start=int(item["start"]),
-                end=int(item["end"]),
+                start=int(start),
+                end=int(end),
                 confidence=_confidence(item.get("confidence", "exact")),
                 weight=_weight(item.get("weight", default_weight), field_name="range weight"),
             ).normalized()
@@ -136,6 +140,8 @@ def _ranges_from_json(value: object, *, default_weight: object) -> list[LineRang
 
 
 def _schema_version(value: object) -> int:
+    if not isinstance(value, int | float | str):
+        raise TypeError(f"schema_version must be a number: {value!r}")
     version = int(value)
     if version != 1:
         raise ValueError(f"unsupported schema_version: {value!r}")
@@ -143,6 +149,8 @@ def _schema_version(value: object) -> int:
 
 
 def _weight(value: object, *, field_name: str) -> float:
+    if not isinstance(value, int | float | str):
+        raise TypeError(f"{field_name} must be a number: {value!r}")
     weight = float(value)
     if not isfinite(weight) or weight < 0:
         raise ValueError(f"{field_name} must be a finite non-negative number")

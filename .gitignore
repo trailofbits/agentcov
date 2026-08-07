@@ -7,5 +7,7 @@ dist/
 build/
 
 agent-coverage/
-aicov.info
-.aicov/
+agentcov.info
+agentcov-html/
+coverage-gcov/
+.agentcov/

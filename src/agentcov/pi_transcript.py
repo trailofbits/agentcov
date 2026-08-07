@@ -80,9 +80,12 @@ def _assistant_payloads(
     user_request: str | None,
     results_by_tool_id: dict[str, _PiToolResult],
 ) -> list[dict[str, Any]]:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
     payloads: list[dict[str, Any]] = []
-    for block in _content_blocks(message.get("content")):
-        if block.get("type") != "toolCall":
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "toolCall":
             continue
         tool_name = _string(block.get("name"))
         tool_use_id = _string(block.get("id"))
@@ -95,9 +98,10 @@ def _assistant_payloads(
             tool_use_id=tool_use_id,
             user_request=user_request,
         )
+        arguments = block.get("arguments")
         payload["tool_input"] = _pi_tool_input(
             tool_name,
-            block.get("arguments") if isinstance(block.get("arguments"), dict) else {},
+            arguments if isinstance(arguments, dict) else {},
             cwd=payload.get("cwd"),
         )
         result = results_by_tool_id.get(tool_use_id)
@@ -184,8 +188,8 @@ def _pi_tool_input(tool_name: str, arguments: dict[str, Any], *, cwd: object) ->
     if tool_name == "grep":
         return {
             "command": _pi_grep_command(arguments),
-            "_aicov_grep_path": _string(arguments.get("path")) or ".",
-            "_aicov_grep_cwd": _string(cwd),
+            "_agentcov_grep_path": _string(arguments.get("path")) or ".",
+            "_agentcov_grep_cwd": _string(cwd),
         }
     return arguments
 
@@ -205,7 +209,8 @@ def _cap_pi_read_input(tool_input: object, result: _PiToolResult) -> object | No
         return None
     if _looks_like_pi_image_read(result.value):
         return None
-    bounds = _pi_read_result_bounds(result.value, tool_input)
+    normalized = dict(tool_input)
+    bounds = _pi_read_result_bounds(result.value, normalized)
     if bounds is None:
         if _result_looks_truncated(result.value):
             return None if not _has_bounded_read_input(tool_input) else tool_input
@@ -213,7 +218,6 @@ def _cap_pi_read_input(tool_input: object, result: _PiToolResult) -> object | No
     start, end = bounds
     if end < start:
         return None
-    normalized = dict(tool_input)
     normalized["start_line"] = start
     normalized["end_line"] = end
     normalized.pop("offset", None)
@@ -235,7 +239,7 @@ def _pi_read_result_bounds(result: object, tool_input: dict[str, Any]) -> tuple[
     if match:
         return start, max(start, int(match.group(1)) - 1)
 
-    details = _result_details(result)
+    details = result.get("details") if isinstance(result, dict) else None
     truncation = details.get("truncation") if isinstance(details, dict) else None
     if isinstance(truncation, dict):
         output_lines = _as_int(truncation.get("outputLines") or truncation.get("output_lines"))
@@ -248,7 +252,7 @@ def _normalize_pi_grep_response(payload: dict[str, Any], result: object) -> obje
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
         return result
-    raw_path = _string(tool_input.get("_aicov_grep_path")) or "."
+    raw_path = _string(tool_input.get("_agentcov_grep_path")) or "."
     text = _response_text(result)
     if not text or raw_path in {"", "."}:
         return result
@@ -362,12 +366,6 @@ def _message_text(message: dict[str, Any]) -> str | None:
     return text or None
 
 
-def _content_blocks(value: object) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
 def _response_text(value: object | None) -> str:
     if value is None:
         return ""
@@ -387,15 +385,9 @@ def _response_text(value: object | None) -> str:
     return ""
 
 
-def _result_details(result: object) -> dict[str, Any]:
-    if isinstance(result, dict) and isinstance(result.get("details"), dict):
-        return result["details"]
-    return {}
-
-
 def _result_looks_truncated(result: object) -> bool:
-    details = _result_details(result)
-    if details.get("truncation"):
+    details = result.get("details") if isinstance(result, dict) else None
+    if isinstance(details, dict) and details.get("truncation"):
         return True
     text = _response_text(result)
     return (
