@@ -19,7 +19,7 @@ Changelog = "https://github.com/trailofbits/agentcov/blob/main/CHANGELOG.md"
 agentcov = "agentcov.cli:main"
 
 [build-system]
-requires = ["hatchling>=1.27.0"]
+requires = ["hatchling>=1.31.0"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
@@ -28,11 +28,11 @@ dev = [
     { include-group = "test" },
 ]
 lint = [
-    "ruff>=0.15.13",
+    "ruff>=0.16.1",
     "ty>=0.0.65",
 ]
 test = [
-    "pytest>=8.3.0",
+    "pytest>=9.1.1",
     "pytest-cov>=7.0.0",
 ]
 
