@@ -149,6 +149,32 @@ def _pi_tool_result_record(
     }
 
 
+def _codex_custom_tool_call(
+    source: str,
+    *,
+    name: str = "exec",
+    call_id: str = "call-1",
+) -> dict[str, object]:
+    return {
+        "type": "response_item",
+        "payload": {
+            "type": "custom_tool_call",
+            "call_id": call_id,
+            "name": name,
+            "input": source,
+        },
+    }
+
+
+def _exec_command_js(cmd: str, workdir: Path) -> str:
+    # Codex writes the argument as a JavaScript object literal, so keys may be bare.
+    escaped = cmd.replace('"', '\\"')
+    return (
+        f'const r = await tools.exec_command({{cmd:"{escaped}",'
+        f'"workdir":"{workdir}",yield_time_ms:30000}});\n'
+    )
+
+
 def test_backfill_reads_codex_response_item_payload_function_call(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
     transcript = tmp_path / "session.jsonl"
@@ -181,6 +207,84 @@ def test_backfill_reads_codex_response_item_payload_function_call(tmp_path: Path
     assert events[0].tool_use_id == "call-1"
     assert events[0].file == "app.py"
     assert [(r.start, r.end) for r in events[0].ranges] == [(1, 2)]
+
+
+def test_backfill_reads_codex_custom_tool_call_exec_command(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    transcript = tmp_path / "session.jsonl"
+    _write_jsonl(
+        transcript,
+        _codex_custom_tool_call(_exec_command_js("sed -n '1,2p' app.py", tmp_path)),
+    )
+
+    root, events = backfill_codex_session(transcript_path=transcript)
+
+    assert root == tmp_path
+    assert len(events) == 1
+    assert events[0].tool_name == "exec"
+    assert events[0].tool_use_id == "call-1"
+    assert events[0].file == "app.py"
+    assert [(r.start, r.end) for r in events[0].ranges] == [(1, 2)]
+
+
+def test_backfill_reads_every_exec_command_in_one_custom_tool_call(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    (tmp_path / "other.py").write_text("a\nb\nc\nd\n", encoding="utf-8")
+    transcript = tmp_path / "session.jsonl"
+    _write_jsonl(
+        transcript,
+        _codex_custom_tool_call(
+            _exec_command_js("sed -n '1,2p' app.py", tmp_path)
+            + _exec_command_js("sed -n '3,4p' other.py", tmp_path)
+        ),
+    )
+
+    _, events = backfill_codex_session(transcript_path=transcript)
+
+    assert [(e.file, e.ranges[0].start, e.ranges[0].end) for e in events] == [
+        ("app.py", 1, 2),
+        ("other.py", 3, 4),
+    ]
+
+
+def test_backfill_skips_exec_command_arguments_it_cannot_resolve(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    transcript = tmp_path / "session.jsonl"
+    _write_jsonl(
+        transcript,
+        # A template literal and a variable both need the program to run first.
+        _codex_custom_tool_call(
+            "const r = await tools.exec_command({cmd:`sed -n '1,2p' ${name}`,"
+            f'workdir:"{tmp_path}"}});\n'
+        ),
+        _codex_custom_tool_call(
+            f'const opts = {{cmd:"sed -n \'1,2p\' app.py",workdir:"{tmp_path}"}};\n'
+            "const r = await tools.exec_command(opts);\n"
+        ),
+    )
+
+    _, events = backfill_codex_session(transcript_path=transcript)
+
+    assert events == []
+
+
+def test_backfill_ignores_custom_tool_calls_that_do_not_read(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    transcript = tmp_path / "session.jsonl"
+    _write_jsonl(
+        transcript,
+        _codex_custom_tool_call(
+            "*** Begin Patch\n*** Update File: app.py\n@@\n-one\n+ONE\n*** End Patch",
+            name="apply_patch",
+        ),
+        _codex_custom_tool_call(
+            'const r = await tools.write_stdin({session_id:94156,chars:"cat app.py\\n"});\n'
+        ),
+    )
+
+    _, events = backfill_codex_session(transcript_path=transcript)
+
+    assert events == []
 
 
 def test_backfill_reads_pi_bash_tool_use(tmp_path: Path) -> None:
