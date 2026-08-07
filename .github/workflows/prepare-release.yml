@@ -1,0 +1,167 @@
+name: prepare release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release; leave blank to bump the minor version
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Create release branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      REQUESTED_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: main
+          # Full history and tags, so the changelog step can diff releases.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+
+      - name: Bump version
+        run: |
+          if test -n "$REQUESTED_VERSION"; then
+            uv version "$REQUESTED_VERSION" --no-sync
+          else
+            uv version --bump minor --no-sync
+          fi
+
+          release_version=$(uv version --short)
+          release_tags=$(git ls-remote --tags origin 'v*' | cut -f2 | sed -e 's|^refs/tags/||' -e '/\^{}$/d')
+          RELEASE_VERSION="$release_version" RELEASE_TAGS="$release_tags" uv run .github/scripts/check_release_version.py
+
+          if git diff --quiet -- pyproject.toml uv.lock; then
+            echo "v$release_version does not change the version files" >&2
+            exit 1
+          fi
+
+          echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
+          echo "PREVIOUS_TAG=$(printf '%s\n' "$release_tags" | sort -V | tail -1)" >> "$GITHUB_ENV"
+
+      - name: Write changelog entry
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Write the CHANGELOG.md entry for agentcov ${{ env.RELEASE_VERSION }}.
+            Publishing the release copies this section verbatim into the
+            GitHub release notes, so it is what users read first.
+
+            Review the history since the previous release:
+            `git log --first-parent ${{ env.PREVIOUS_TAG }}..HEAD`, using
+            `git show` on individual commits for detail.
+
+            Only changes someone installing agentcov would notice belong in the
+            entry: commands, flags, and output; which agent transcripts and
+            shell command shapes are recognized; what lands in the event log
+            and coverage JSON; LCOV, gcov, and HTML report content; hook
+            installation; configuration keys; and packaging. Mention runtime
+            dependency changes only when they fix a vulnerability or change
+            behavior.
+
+            Leave everything else out, even when it dominates the history:
+            CI and GitHub Actions workflows, release tooling, repo-internal
+            docs like AGENTS.md, test-only changes, fixtures, lint and build
+            tooling bumps, and internal refactoring. A release whose history
+            is entirely such changes gets a short entry saying only what
+            users see, or no bullets at all rather than invented ones.
+
+            Then update CHANGELOG.md: if an "## Unreleased" section exists,
+            rename it to "## ${{ env.RELEASE_VERSION }}" and fold in any
+            qualifying changes it does not already cover; otherwise insert
+            that section directly under "# Changelog".
+
+            Match the style of the existing entries: a one-sentence summary of
+            the release theme, then short bullets in the user's language, no
+            PR numbers or commit hashes. Do not modify already-released
+            sections or any other file.
+          claude_args: |
+            --allowedTools "Read,Edit,Write,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git tag:*)"
+
+      - name: Create release branch
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_branch="release/v$RELEASE_VERSION"
+
+          if git ls-remote --exit-code origin "refs/heads/$release_branch" >/dev/null; then
+            echo "$release_branch already exists; delete it before preparing this release again" >&2
+            exit 1
+          fi
+
+          if ! grep -qxF "## $RELEASE_VERSION" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for $RELEASE_VERSION" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock CHANGELOG.md
+          git commit -m "Prepare release v$RELEASE_VERSION"
+
+          release_commit=$(git rev-parse HEAD)
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/$release_branch"
+
+          echo "branch=$release_branch" >> "$GITHUB_OUTPUT"
+          echo "commit=$release_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Open release pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ steps.commit.outputs.branch }}
+        run: |
+          pr_url=$(gh pr create \
+            --base main \
+            --head "$RELEASE_BRANCH" \
+            --title "Prepare release v$RELEASE_VERSION" \
+            --body "Merging this pull request will publish release v$RELEASE_VERSION automatically. Review the generated CHANGELOG.md entry before merging.")
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger required checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ steps.commit.outputs.branch }}
+        run: |
+          # Pull requests opened with GITHUB_TOKEN never receive pull_request
+          # events, so dispatch the required checks onto the release branch.
+          gh workflow run ci.yml --ref "$RELEASE_BRANCH"
+          gh workflow run zizmor.yml --ref "$RELEASE_BRANCH"
+
+      - name: Show pull request link
+        env:
+          RELEASE_COMMIT: ${{ steps.commit.outputs.commit }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          {
+            echo "## Release v$RELEASE_VERSION is ready"
+            echo
+            echo "Commit: \`$RELEASE_COMMIT\`"
+            echo
+            echo "Release pull request: $PR_URL"
+            echo
+            echo "Merging the pull request will publish the release automatically."
+          } >> "$GITHUB_STEP_SUMMARY"
