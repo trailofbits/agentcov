@@ -12,16 +12,39 @@ metadata.
 
 ## Install
 
+With uv, from PyPI:
+
+```sh
+uv tool install agentcov
+```
+
+Or run it without installing anything:
+
+```sh
+uvx agentcov summary
+```
+
+With pipx:
+
+```sh
+pipx install agentcov
+```
+
+As a single file: every GitHub release attaches `agentcov.pyz`, a
+self-contained [zipapp](https://docs.python.org/3/library/zipapp.html) that
+runs anywhere Python 3.11+ is available. Because it is built and attested by
+the release workflow, its provenance can be verified before running it:
+
+```sh
+curl -LO https://github.com/trailofbits/agentcov/releases/latest/download/agentcov.pyz
+gh attestation verify agentcov.pyz --repo trailofbits/agentcov
+python3 agentcov.pyz --help
+```
+
 From this repository:
 
 ```sh
 uv tool install .
-```
-
-From a published package, use the same shape:
-
-```sh
-uv tool install agentcov
 ```
 
 For local development:

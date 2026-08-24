@@ -66,6 +66,13 @@ jobs:
       - name: Build distributions
         run: uv build
 
+      # A single-file zipapp rides along in dist/ so it is attested and
+      # attached to the GitHub release together with the wheel and sdist.
+      - name: Build zipapp
+        run: |
+          uv run .github/scripts/build_zipapp.py
+          ./dist/agentcov.pyz --help >/dev/null
+
       # Let build-job reruns replace the previous artifact.
       - name: Upload distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -179,13 +186,17 @@ jobs:
       contents: read
       id-token: write
     steps:
-      # Reuse release assets so partial PyPI uploads resume with identical bytes.
+      # Reuse release assets so partial PyPI uploads resume with identical
+      # bytes. Only the wheel and sdist go to PyPI; the zipapp is a
+      # GitHub-release-only asset and would be rejected by the index.
       - name: Download release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ needs.build.outputs.release-version }}
-        run: gh release download "v$RELEASE_VERSION" --dir dist/
+        run: |
+          gh release download "v$RELEASE_VERSION" --dir dist/ \
+            --pattern '*.whl' --pattern '*.tar.gz'
 
       - name: Publish distributions
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

@@ -69,3 +69,10 @@ jobs:
       # break should fail here rather than halfway through a release.
       - name: Build
         run: make build
+
+      # The release workflow also attaches the zipapp, so it gets the same
+      # fail-early treatment, including a smoke run.
+      - name: Build zipapp
+        run: |
+          uv run .github/scripts/build_zipapp.py
+          ./dist/agentcov.pyz --help >/dev/null
