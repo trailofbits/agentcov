@@ -115,6 +115,11 @@ When adding support for a new shell command shape:
 - add the case in `src/agentcov/parser.py` and return `ParsedObservation`s
 - add both a positive test and a test that a near-miss variant still comes back
   as unknown, so the new case cannot silently widen later
+- if the change alters what is recorded for an already-supported shape (ranges,
+  kind, or confidence), bump `PARSER_VERSION` in `parser.py`. Re-backfilled
+  events carry the new version and aggregation supersedes the same tool call's
+  older-version events, which is what keeps replays idempotent across parser
+  upgrades.
 
 When adding support for a new agent:
 

@@ -93,6 +93,19 @@ genhtml agentcov.info --output-directory coverage-html
 Unsupported read-like shell shapes are recorded as unknown events rather than
 being guessed as full-file reads.
 
+Read ranges never claim more than the tool visibly returned: when output
+evidence is available, truncated shell reads are capped and downgraded to
+`inferred` with the original claim kept in the event `reason`, and reads that
+produced no visible output are recorded as unknown. Reads that cannot be
+attributed (for example a path outside the repository) are recorded as unknown
+events instead of being dropped. Corrupt or newer-versioned lines in
+`events.jsonl` are skipped and disclosed in reports instead of failing them.
+
+Events record the parser version that produced them. Re-backfilling a
+transcript after a parser upgrade replaces that tool call's older events in
+reports (`superseded_events` in the summary) instead of double-counting both
+interpretations.
+
 ## Outputs
 
 - `.agentcov/events.jsonl`: append-only observed read events.

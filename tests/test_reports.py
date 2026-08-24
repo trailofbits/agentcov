@@ -4,16 +4,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from agentcov.aggregate import build_coverage
 from agentcov.cli import _append_events_by_root
 from agentcov.config import load_config
+from agentcov.git import line_range_digest
 from agentcov.importers import import_agent_coverage
 from agentcov.models import CoverageEvent, LineRange
 from agentcov.parser import parse_shell_command
 from agentcov.report import unread_text, write_gcov, write_html, write_lcov
-from agentcov.storage import append_events, load_events
+from agentcov.storage import append_events, load_events, load_events_with_errors
 
 
 def _git(command: list[str], cwd: Path) -> None:
@@ -85,6 +84,101 @@ def test_overlapping_ranges_from_one_event_count_once(tmp_path: Path) -> None:
     lines = coverage["files"]["a.py"]["lines"]
     assert [lines[str(line)]["read_count"] for line in range(1, 5)] == [1, 1, 1, 1]
     assert [lines[str(line)]["unique_read_count"] for line in range(1, 5)] == [1, 1, 1, 1]
+
+
+def test_event_log_parse_errors_are_disclosed_in_coverage(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("one\n", encoding="utf-8")
+
+    coverage = build_coverage(
+        root=tmp_path,
+        config=load_config(tmp_path),
+        events=[],
+        parse_errors=[{"line": 3, "error": "boom", "preview": "{bad"}],
+    )
+
+    assert coverage["summary"]["event_parse_errors"] == 1
+    assert any(
+        entry["source"] == "event-log" and "line 3" in entry["reason"]
+        for entry in coverage["unknown_events"]
+    )
+
+
+def test_range_summaries_are_bounded_and_disclosed(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("".join(f"line {i}\n" for i in range(1, 261)), encoding="utf-8")
+    events = [
+        CoverageEvent(
+            tool_use_id=f"tool-{i}",
+            file="a.py",
+            ranges=[LineRange(i, i)],
+            command=f"sed -n '{i}p' a.py",
+        )
+        for i in range(1, 251)
+    ]
+
+    coverage = build_coverage(root=tmp_path, config=load_config(tmp_path), events=events)
+
+    file_data = coverage["files"]["a.py"]
+    assert len(file_data["read_ranges"]) == 200
+    assert file_data["read_ranges_elided"] == 50
+    assert file_data["read_lines"] == 250
+    assert "search_seen_ranges_elided" not in file_data
+
+
+def test_reparsed_tool_call_supersedes_older_parser_events(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    call = {
+        "session_id": "sess",
+        "turn_id": "turn",
+        "tool_use_id": "tool-1",
+        "tool_name": "Bash",
+        "command": "cat a.py",
+    }
+    old = CoverageEvent(**call, file="a.py", ranges=[LineRange(1, 4)], parser_version=0)
+    new = CoverageEvent(
+        **call, file="a.py", ranges=[LineRange(1, 2)], confidence="inferred", parser_version=2
+    )
+
+    coverage = build_coverage(root=tmp_path, config=load_config(tmp_path), events=[old, new])
+
+    assert coverage["files"]["a.py"]["read_lines"] == 2
+    assert coverage["summary"]["superseded_events"] == 1
+    assert coverage["summary"]["events"] == 1
+
+
+def test_events_without_tool_use_id_are_never_superseded(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    old = CoverageEvent(file="a.py", ranges=[LineRange(1, 4)], parser_version=0)
+    new = CoverageEvent(file="a.py", ranges=[LineRange(1, 2)], parser_version=2)
+
+    coverage = build_coverage(root=tmp_path, config=load_config(tmp_path), events=[old, new])
+
+    assert coverage["files"]["a.py"]["read_lines"] == 4
+    assert coverage["summary"]["superseded_events"] == 0
+
+
+def test_matching_content_anchor_keeps_confidence(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    digest = line_range_digest(["one", "two", "three"], 1, 2)
+    event = CoverageEvent(file="a.py", ranges=[LineRange(1, 2, digest=digest)])
+
+    coverage = build_coverage(root=tmp_path, config=load_config(tmp_path), events=[event])
+
+    file_data = coverage["files"]["a.py"]
+    assert file_data["lines"]["1"]["confidence"] == "exact"
+    assert "content_changed" not in file_data["read_ranges"][0]
+
+
+def test_stale_content_anchor_downgrades_confidence(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("one\nCHANGED\nthree\n", encoding="utf-8")
+    original_digest = line_range_digest(["one", "two", "three"], 1, 2)
+    event = CoverageEvent(file="a.py", ranges=[LineRange(1, 2, digest=original_digest)])
+
+    coverage = build_coverage(root=tmp_path, config=load_config(tmp_path), events=[event])
+
+    file_data = coverage["files"]["a.py"]
+    assert file_data["lines"]["1"]["confidence"] == "low"
+    assert file_data["read_ranges"][0]["content_changed"] is True
+    assert file_data["read_ranges"][0]["confidence"] == "low"
 
 
 def test_coverage_json_includes_attribution_and_search_context_counts(tmp_path: Path) -> None:
@@ -434,13 +528,16 @@ def test_append_events_keeps_duplicate_live_events_without_dedupe(tmp_path: Path
     assert len(load_events(root=tmp_path)) == 2
 
 
-def test_load_events_rejects_invalid_kind(tmp_path: Path) -> None:
+def test_load_events_skips_invalid_kind_and_discloses_it(tmp_path: Path) -> None:
     event_dir = tmp_path / ".agentcov"
     event_dir.mkdir()
     (event_dir / "events.jsonl").write_text('{"kind":"bogus","ranges":[]}\n', encoding="utf-8")
 
-    with pytest.raises(ValueError, match="invalid coverage kind"):
-        load_events(root=tmp_path)
+    events, errors = load_events_with_errors(root=tmp_path)
+
+    assert events == []
+    assert len(errors) == 1
+    assert "invalid coverage kind" in str(errors[0]["error"])
 
 
 def test_append_events_by_root_writes_each_repo_store(tmp_path: Path) -> None:

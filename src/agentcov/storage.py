@@ -11,6 +11,7 @@ from typing import IO
 from .config import AgentcovConfig, load_config
 from .git import find_repo_root
 from .models import CoverageEvent, coverage_event_identity
+from .paths import redact_secrets
 
 EVENTS_FILE = "events.jsonl"
 COVERAGE_FILE = "coverage.json"
@@ -45,7 +46,8 @@ def append_events(
         _lock_file(file)
         if dedupe:
             file.seek(0)
-            seen = {coverage_event_identity(event) for event in _read_events(file, path)}
+            existing, _ = _read_events(file, path)
+            seen = {coverage_event_identity(event) for event in existing}
             file.seek(0, os.SEEK_END)
         else:
             seen = set()
@@ -68,17 +70,32 @@ def load_events(
     config: AgentcovConfig | None = None,
     path: Path | None = None,
 ) -> list[CoverageEvent]:
+    events, _ = load_events_with_errors(root=root, config=config, path=path)
+    return events
+
+
+def load_events_with_errors(
+    *,
+    root: Path | None = None,
+    config: AgentcovConfig | None = None,
+    path: Path | None = None,
+) -> tuple[list[CoverageEvent], list[dict[str, object]]]:
     repo_root = root or find_repo_root()
     cfg = config or load_config(repo_root)
     event_path = path or events_path(repo_root, cfg)
     if not event_path.exists():
-        return []
+        return [], []
     with event_path.open("r", encoding="utf-8") as file:
         return _read_events(file, event_path)
 
 
-def _read_events(file: Iterable[str], event_path: Path) -> list[CoverageEvent]:
+def _read_events(
+    file: Iterable[str], event_path: Path
+) -> tuple[list[CoverageEvent], list[dict[str, object]]]:
+    # One corrupt or newer-versioned line must not take down every reader; the
+    # skipped lines are returned so reports can disclose them as unknowns.
     events: list[CoverageEvent] = []
+    errors: list[dict[str, object]] = []
     for line_number, line in enumerate(file, start=1):
         stripped = line.strip()
         if not stripped:
@@ -89,9 +106,15 @@ def _read_events(file: Iterable[str], event_path: Path) -> list[CoverageEvent]:
                 raise ValueError("event JSON must be an object")
             events.append(CoverageEvent.from_json(data))
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            message = f"invalid event JSON at {event_path}:{line_number}: {exc}"
-            raise ValueError(message) from exc
-    return events
+            errors.append(
+                {
+                    "path": str(event_path),
+                    "line": line_number,
+                    "error": str(exc),
+                    "preview": redact_secrets(stripped[:120]),
+                }
+            )
+    return events, errors
 
 
 def write_coverage_json(
