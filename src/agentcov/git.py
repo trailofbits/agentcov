@@ -112,6 +112,19 @@ def file_line_count(path: Path) -> int:
     return text.count("\n") + (0 if text.endswith("\n") else 1)
 
 
+def file_lines(path: Path) -> list[str] | None:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+
+
+def line_range_digest(lines: list[str], start: int, end: int) -> str:
+    """Digest of the exact lines in a 1-indexed inclusive range."""
+    content = "\n".join(lines[max(0, start - 1) : end])
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+
 def inventory_hash(files: list[str]) -> str:
     digest = hashlib.sha256()
     for rel in files:

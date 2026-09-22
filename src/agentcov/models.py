@@ -22,6 +22,9 @@ class LineRange:
     end: int
     confidence: Confidence = "exact"
     weight: float = 1.0
+    # Content anchor: digest of the exact lines at read time (live hooks only).
+    # Lets aggregation prove the lines are unchanged, or downgrade when not.
+    digest: str | None = None
 
     def normalized(self) -> LineRange:
         start = max(1, self.start)
@@ -31,6 +34,7 @@ class LineRange:
             end=end,
             confidence=_confidence(self.confidence),
             weight=_weight(self.weight, field_name="range weight"),
+            digest=self.digest,
         )
 
 
@@ -65,6 +69,10 @@ class CoverageEvent:
     weight: float = 1.0
     task_path: list[str] = field(default_factory=list)
     reason: str | None = None
+    # Version of the extraction logic that produced this event; 0 means legacy.
+    # Excluded from the identity tuple so re-parsed events supersede at
+    # aggregation instead of duplicating in the log.
+    parser_version: int = 0
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -100,6 +108,7 @@ class CoverageEvent:
             weight=weight,
             task_path=_string_list(data.get("task_path")),
             reason=data.get("reason"),
+            parser_version=_parser_version(data.get("parser_version", 0)),
         )
 
 
@@ -128,15 +137,28 @@ def _ranges_from_json(value: object, *, default_weight: object) -> list[LineRang
         end = item.get("end")
         if not isinstance(start, int | float | str) or not isinstance(end, int | float | str):
             raise TypeError(f"range start/end must be numbers: {item!r}")
+        digest = item.get("digest")
+        if digest is not None and not isinstance(digest, str):
+            raise ValueError(f"range digest must be a string: {item!r}")
         ranges.append(
             LineRange(
                 start=int(start),
                 end=int(end),
                 confidence=_confidence(item.get("confidence", "exact")),
                 weight=_weight(item.get("weight", default_weight), field_name="range weight"),
+                digest=digest,
             ).normalized()
         )
     return ranges
+
+
+def _parser_version(value: object) -> int:
+    if not isinstance(value, int | float | str):
+        raise TypeError(f"parser_version must be a number: {value!r}")
+    version = int(value)
+    if version < 0:
+        raise ValueError(f"parser_version must be non-negative: {value!r}")
+    return version
 
 
 def _schema_version(value: object) -> int:

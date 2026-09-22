@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentcov.parser import parse_shell_command
+from agentcov.parser import parse_direct_tool_input, parse_shell_command
 
 
 def _write_lines(path: Path, count: int) -> None:
@@ -230,3 +230,154 @@ def test_echo_sed_pipeline_is_ignored(tmp_path: Path) -> None:
     observations = parse_shell_command("echo foo | sed -n '1p'", cwd=tmp_path, root=tmp_path)
 
     assert observations == []
+
+
+def test_multi_stage_pipeline_is_unknown_not_over_attributed(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "a.py", 100)
+
+    observations = parse_shell_command(
+        "cat a.py | sed -n '1,50p' | head -5",
+        cwd=tmp_path,
+        root=tmp_path,
+    )
+
+    assert observations[0].kind == "unknown"
+    assert observations[0].reason == "unsupported multi-stage pipeline"
+
+
+def test_read_range_capped_by_truncated_tool_output(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "big.py", 100)
+
+    observations = parse_shell_command(
+        "cat big.py",
+        cwd=tmp_path,
+        root=tmp_path,
+        tool_response={"stdout": "line 1\nline 2\nline 3\n"},
+    )
+
+    assert observations[0].kind == "read"
+    assert [(r.start, r.end) for r in observations[0].ranges] == [(1, 3)]
+    assert observations[0].confidence == "inferred"
+    assert "capped" in (observations[0].reason or "")
+
+
+def test_read_with_matching_output_keeps_exact_range(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "big.py", 4)
+
+    observations = parse_shell_command(
+        "cat big.py",
+        cwd=tmp_path,
+        root=tmp_path,
+        tool_response={"stdout": "line 1\nline 2\nline 3\nline 4\n"},
+    )
+
+    assert [(r.start, r.end) for r in observations[0].ranges] == [(1, 4)]
+    assert observations[0].confidence == "exact"
+
+
+def test_read_with_opaque_response_is_not_capped(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "big.py", 100)
+
+    observations = parse_shell_command(
+        "cat big.py",
+        cwd=tmp_path,
+        root=tmp_path,
+        tool_response={"exit_code": 0},
+    )
+
+    assert [(r.start, r.end) for r in observations[0].ranges] == [(1, 100)]
+    assert observations[0].confidence == "exact"
+
+
+def test_read_with_no_visible_output_is_unknown(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "big.py", 10)
+
+    observations = parse_shell_command(
+        "cat big.py > /dev/null",
+        cwd=tmp_path,
+        root=tmp_path,
+        tool_response={"stdout": ""},
+    )
+
+    assert observations[0].kind == "unknown"
+    assert observations[0].reason == "read command produced no visible output"
+
+
+def test_repeated_search_output_across_segments_counted_once(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "a.py", 10)
+
+    observations = parse_shell_command(
+        "rg -n TODO . && rg -n FIXME .",
+        cwd=tmp_path,
+        root=tmp_path,
+        tool_response={"stdout": "a.py:3:TODO x\n"},
+    )
+
+    seen = [obs for obs in observations if obs.kind == "search_seen"]
+    assert len(seen) == 1
+    assert [(r.start, r.end) for r in seen[0].ranges] == [(3, 3)]
+
+
+def test_backslash_newline_continuation_joins_lines(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "a.py", 10)
+
+    observations = parse_shell_command(
+        "sed -n '1,2p' \\\na.py",
+        cwd=tmp_path,
+        root=tmp_path,
+    )
+
+    assert len(observations) == 1
+    assert observations[0].file == "a.py"
+    assert [(r.start, r.end) for r in observations[0].ranges] == [(1, 2)]
+
+
+def test_escaped_quote_inside_double_quotes_does_not_split_segments(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "a.py", 10)
+
+    observations = parse_shell_command(
+        'echo "a\\" && b" && cat a.py',
+        cwd=tmp_path,
+        root=tmp_path,
+    )
+
+    assert [obs.file for obs in observations] == ["a.py"]
+    assert observations[0].kind == "read"
+
+
+def test_trailing_lone_backslash_is_still_unknown(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "a.py", 10)
+
+    observations = parse_shell_command("cat a.py \\", cwd=tmp_path, root=tmp_path)
+
+    assert observations[0].kind == "unknown"
+    assert "unsupported shell syntax" in (observations[0].reason or "")
+
+
+def test_direct_read_outside_root_is_unknown_not_silent(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("print('outside')\n", encoding="utf-8")
+
+    observations = parse_direct_tool_input(
+        {"file_path": str(outside), "limit": 5},
+        cwd=root,
+        root=root,
+    )
+
+    assert len(observations) == 1
+    assert observations[0].kind == "unknown"
+    assert "outside the repository" in (observations[0].reason or "")
+
+
+def test_direct_read_of_missing_file_is_unknown_not_silent(tmp_path: Path) -> None:
+    observations = parse_direct_tool_input(
+        {"file_path": "ghost.py"},
+        cwd=tmp_path,
+        root=tmp_path,
+    )
+
+    assert len(observations) == 1
+    assert observations[0].kind == "unknown"
+    assert "missing or empty" in (observations[0].reason or "")

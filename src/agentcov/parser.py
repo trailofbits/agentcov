@@ -8,6 +8,11 @@ from .git import file_line_count
 from .models import LineRange, ParsedObservation
 from .paths import normalize_file_path
 
+# Bump when extraction logic changes what it records for an already-supported
+# shape. Aggregation drops a tool call's lower-versioned events once the same
+# call has been re-parsed at a higher version, so re-backfills stay idempotent.
+PARSER_VERSION = 2
+
 READ_WEIGHTS = {
     "focused": 1.0,
     "head_tail": 0.8,
@@ -40,16 +45,19 @@ def parse_shell_command(
     if not command:
         return []
 
+    observations: list[ParsedObservation] | None = None
     if command.startswith("for "):
-        loop = _parse_simple_for_loop(command, cwd=cwd, root=root, tool_response=tool_response)
-        if loop is not None:
-            return loop
+        observations = _parse_simple_for_loop(
+            command, cwd=cwd, root=root, tool_response=tool_response
+        )
 
-    observations: list[ParsedObservation] = []
-    for segment in _split_top_level_segments(command):
-        parsed = _parse_segment(segment, cwd=cwd, root=root, tool_response=tool_response)
-        observations.extend(parsed)
-    return observations
+    if observations is None:
+        observations = []
+        for segment in _split_top_level_segments(command):
+            parsed = _parse_segment(segment, cwd=cwd, root=root, tool_response=tool_response)
+            observations.extend(parsed)
+    observations = _dedupe_search_observations(observations)
+    return _cap_reads_to_response(observations, tool_response)
 
 
 def parse_direct_tool_input(
@@ -58,19 +66,24 @@ def parse_direct_tool_input(
     if not isinstance(tool_input, dict):
         return []
     files: list[str] = []
+    unresolved: list[str] = []
+
+    def collect(raw: str) -> None:
+        normalized = normalize_file_path(raw, cwd, root)
+        if normalized:
+            files.append(normalized)
+        else:
+            unresolved.append(raw)
+
     for key in ("path", "file", "file_path", "filename"):
         value = tool_input.get(key)
         if isinstance(value, str):
-            normalized = normalize_file_path(value, cwd, root)
-            if normalized:
-                files.append(normalized)
+            collect(value)
     raw_files = tool_input.get("files")
     if isinstance(raw_files, list):
         for item in raw_files:
             if isinstance(item, str):
-                normalized = normalize_file_path(item, cwd, root)
-                if normalized:
-                    files.append(normalized)
+                collect(item)
 
     start = _as_int(tool_input.get("start_line") or tool_input.get("line_start"))
     end = _as_int(tool_input.get("end_line") or tool_input.get("line_end"))
@@ -85,22 +98,29 @@ def parse_direct_tool_input(
         end = start + max(0, limit - 1)
 
     observations: list[ParsedObservation] = []
+    for raw in dict.fromkeys(unresolved):
+        # A read that cannot be attributed must stay auditable, not vanish.
+        observations.append(_unknown(raw, f"path is outside the repository or unresolvable: {raw}"))
     for file in dict.fromkeys(files):
         line_count = file_line_count(root / file)
         range_start = start or 1
         range_end = end or line_count
+        if range_end <= 0:
+            # No explicit bound and the file has no readable lines: nothing
+            # was read, but the attempt must stay auditable.
+            observations.append(_unknown(file, f"file is missing or empty: {file}"))
+            continue
         if range_end < range_start:
             range_end = range_start
-        if range_end > 0:
-            observations.append(
-                ParsedObservation(
-                    file=file,
-                    ranges=[LineRange(range_start, range_end, "exact", READ_WEIGHTS["focused"])],
-                    kind="read",
-                    confidence="exact",
-                    weight=READ_WEIGHTS["focused"],
-                )
+        observations.append(
+            ParsedObservation(
+                file=file,
+                ranges=[LineRange(range_start, range_end, "exact", READ_WEIGHTS["focused"])],
+                kind="read",
+                confidence="exact",
+                weight=READ_WEIGHTS["focused"],
             )
+        )
     return observations
 
 
@@ -170,6 +190,10 @@ def _parse_pipeline(tokens: list[str], *, cwd: Path, root: Path) -> list[ParsedO
     pipe_index = tokens.index("|")
     left = tokens[:pipe_index]
     right = tokens[pipe_index + 1 :]
+    if "|" in right:
+        # A later stage (e.g. `| head -5`) can shrink what the agent saw below
+        # what the sed range claims, so the range cannot be trusted.
+        return [_unknown(" ".join(tokens), "unsupported multi-stage pipeline")]
     if not left or not right or Path(right[0]).name != "sed":
         return [_unknown(" ".join(tokens), "unsupported pipeline")]
     source_file = _pipeline_source_file(left, cwd=cwd, root=root)
@@ -602,9 +626,27 @@ def _split_top_level_segments(command: str) -> list[str]:
     while index < len(command):
         char = command[index]
         if quote:
+            if quote == '"' and char == "\\" and index + 1 < len(command):
+                # An escaped character inside double quotes must not close them.
+                current.append(char)
+                current.append(command[index + 1])
+                index += 2
+                continue
             current.append(char)
             if char == quote:
                 quote = None
+            index += 1
+            continue
+        if char == "\\":
+            if index + 1 < len(command) and command[index + 1] == "\n":
+                # Backslash-newline joins physical lines into one command.
+                index += 2
+                continue
+            current.append(char)
+            if index + 1 < len(command):
+                current.append(command[index + 1])
+                index += 2
+                continue
             index += 1
             continue
         if char in {"'", '"'}:
@@ -649,6 +691,117 @@ def _unknown(command: str, reason: str) -> ParsedObservation:
         weight=0.0,
         reason=reason,
     )
+
+
+def _dedupe_search_observations(
+    observations: list[ParsedObservation],
+) -> list[ParsedObservation]:
+    # A compound command (`rg a src && rg b src`) parses the same combined
+    # output once per search segment; the sightings are physically one.
+    seen: set[tuple[object, ...]] = set()
+    deduped: list[ParsedObservation] = []
+    for observation in observations:
+        if observation.kind == "search_seen":
+            key = (
+                observation.file,
+                tuple((r.start, r.end, r.weight) for r in observation.ranges),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+        deduped.append(observation)
+    return deduped
+
+
+def _cap_reads_to_response(
+    observations: list[ParsedObservation],
+    tool_response: object | None,
+) -> list[ParsedObservation]:
+    """Never let a read range claim more lines than the tool visibly returned.
+
+    Capping only ever shrinks: with several observations sharing one combined
+    response the total output line count is still a valid per-observation
+    upper bound. Without usable text evidence the observations pass through.
+    """
+    evidence = _response_line_evidence(tool_response)
+    if evidence is None:
+        return observations
+    capped: list[ParsedObservation] = []
+    for observation in observations:
+        if observation.kind != "read" or not observation.ranges:
+            capped.append(observation)
+            continue
+        ranges = [line_range.normalized() for line_range in observation.ranges]
+        span = sum(line_range.end - line_range.start + 1 for line_range in ranges)
+        if evidence >= span:
+            capped.append(observation)
+            continue
+        if evidence <= 0:
+            capped.append(
+                ParsedObservation(
+                    file=observation.file,
+                    ranges=[],
+                    kind="unknown",
+                    confidence="unknown",
+                    weight=0.0,
+                    reason="read command produced no visible output",
+                )
+            )
+            continue
+        if len(ranges) > 1:
+            capped.append(
+                ParsedObservation(
+                    file=observation.file,
+                    ranges=[],
+                    kind="unknown",
+                    confidence="unknown",
+                    weight=0.0,
+                    reason=(
+                        f"tool output has {evidence} line(s), fewer than the"
+                        f" {span} claimed across {len(ranges)} ranges"
+                    ),
+                )
+            )
+            continue
+        only = ranges[0]
+        capped.append(
+            ParsedObservation(
+                file=observation.file,
+                ranges=[LineRange(only.start, only.start + evidence - 1, "inferred", only.weight)],
+                kind="read",
+                confidence="inferred",
+                weight=observation.weight,
+                reason=(
+                    f"range capped to {evidence} output line(s);"
+                    f" command claimed {only.start}-{only.end}"
+                ),
+            )
+        )
+    return capped
+
+
+def _response_line_evidence(tool_response: object | None) -> int | None:
+    """Count visible output lines, or None when the response is not usable text."""
+    if tool_response is None:
+        return None
+    if isinstance(tool_response, str):
+        return _text_line_count(tool_response)
+    if isinstance(tool_response, dict):
+        if not any(
+            key in tool_response for key in ("stdout", "output", "stderr", "text", "content")
+        ):
+            return None
+        return _text_line_count(_response_text(tool_response))
+    if isinstance(tool_response, list):
+        text = _response_text(tool_response)
+        return _text_line_count(text) if text else None
+    return None
+
+
+def _text_line_count(text: str) -> int:
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
 
 
 def _as_int(value: object) -> int | None:

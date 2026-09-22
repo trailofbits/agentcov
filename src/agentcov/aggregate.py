@@ -1,13 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from .config import AgentcovConfig, is_excluded, load_config
-from .git import file_line_count, git_metadata, inventory_hash, list_project_files
+from .git import (
+    file_line_count,
+    file_lines,
+    git_metadata,
+    inventory_hash,
+    line_range_digest,
+    list_project_files,
+)
 from .models import Confidence, CoverageEvent, LineRange
 from .paths import display_command
+
+# Per-file cap on stored range summaries; the newest are kept and the elided
+# count is disclosed so the JSON stays bounded without silently losing history.
+MAX_RANGE_SUMMARIES = 200
 
 
 @dataclass
@@ -105,7 +116,9 @@ class FileCoverage:
                 for line, stats in sorted(self.lines.items())
                 if stats.read_count or stats.search_seen_count
             }
-        return {
+        read_ranges, read_elided = _bounded_summaries(self.read_ranges)
+        search_ranges, search_elided = _bounded_summaries(self.search_seen_ranges)
+        data = {
             "path": self.path,
             "line_count": self.line_count,
             "read_lines": self.read_lines,
@@ -114,10 +127,15 @@ class FileCoverage:
             "search_context_lines": self.search_context_lines,
             "read_percent": self.read_percent,
             "unread_ranges": [{"start": start, "end": end} for start, end in self.unread_ranges()],
-            "read_ranges": self.read_ranges,
-            "search_seen_ranges": self.search_seen_ranges,
+            "read_ranges": read_ranges,
+            "search_seen_ranges": search_ranges,
             "lines": line_data,
         }
+        if read_elided:
+            data["read_ranges_elided"] = read_elided
+        if search_elided:
+            data["search_seen_ranges_elided"] = search_elided
+        return data
 
 
 def build_coverage(
@@ -125,14 +143,25 @@ def build_coverage(
     root: Path,
     events: list[CoverageEvent],
     config: AgentcovConfig | None = None,
+    parse_errors: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     cfg = config or load_config(root)
+    events, superseded_events = _supersede_reparsed_events(events)
     inventory = list_project_files(root, cfg)
     files: dict[str, FileCoverage] = {
         rel: FileCoverage(path=rel, line_count=file_line_count(_source_path(root, rel)))
         for rel in inventory
     }
-    unknown_events: list[dict[str, Any]] = []
+    current_lines: dict[str, list[str] | None] = {}
+    unknown_events: list[dict[str, Any]] = [
+        {
+            "source": "event-log",
+            "reason": f"invalid event JSON at line {error.get('line')}: {error.get('error')}",
+            "command": error.get("preview"),
+            "confidence": "unknown",
+        }
+        for error in parse_errors or []
+    ]
 
     for event in events:
         if event.kind == "unknown" or not event.file or not event.ranges:
@@ -159,10 +188,19 @@ def build_coverage(
                 _event_summary(event, reason="file is missing, unreadable, or empty")
             )
             continue
+        stale = False
+        event_ranges = event.ranges
+        if event.kind != "search_seen":
+            if rel not in current_lines:
+                current_lines[rel] = file_lines(_source_path(root, rel))
+            event_ranges, stale = _verify_content_anchors(event_ranges, current_lines[rel])
+        applied = (
+            replace(event, confidence="low") if stale and event.confidence == "exact" else event
+        )
         ranges = (
-            _bounded_search_ranges(event.ranges, file_cov.line_count)
+            _bounded_search_ranges(event_ranges, file_cov.line_count)
             if event.kind == "search_seen"
-            else _merged_bounded_ranges(event.ranges, file_cov.line_count)
+            else _merged_bounded_ranges(event_ranges, file_cov.line_count)
         )
         for normalized in ranges:
             start = normalized.start
@@ -175,16 +213,18 @@ def build_coverage(
                 "event_id": event.event_id,
                 "command": display_command(event.command),
                 "timestamp": event.timestamp,
-                "attribution": _event_attribution(event),
+                "attribution": _event_attribution(applied),
             }
+            if stale:
+                range_summary["content_changed"] = True
             if event.kind == "search_seen":
                 range_summary["search_role"] = _search_role(normalized.weight)
                 file_cov.search_seen_ranges.append(range_summary)
             else:
                 file_cov.read_ranges.append(range_summary)
             for line in range(start, end + 1):
-                stats = file_cov.lines.setdefault(line, LineStats(confidence=event.confidence))
-                _apply_event_to_line(stats, event, weight=normalized.weight)
+                stats = file_cov.lines.setdefault(line, LineStats(confidence=applied.confidence))
+                _apply_event_to_line(stats, applied, weight=normalized.weight)
 
     files_json = {path: coverage.to_json() for path, coverage in sorted(files.items())}
     total_lines = sum(coverage.line_count for coverage in files.values())
@@ -212,6 +252,8 @@ def build_coverage(
             "events": len(events),
             "sessions": len(sessions),
             "unknown_events": len(unknown_events),
+            "event_parse_errors": len(parse_errors or []),
+            "superseded_events": superseded_events,
         },
         "sessions": sessions,
         "files": files_json,
@@ -345,6 +387,82 @@ def _bounded_search_ranges(ranges: list[LineRange], line_count: int) -> list[Lin
         LineRange(start=line, end=line, confidence=confidence, weight=weight)
         for line, (confidence, weight) in sorted(by_line.items())
     ]
+
+
+def _supersede_reparsed_events(
+    events: list[CoverageEvent],
+) -> tuple[list[CoverageEvent], int]:
+    """Keep only the newest parser's view of each replayed tool call.
+
+    Re-backfilling after a parser upgrade appends events whose ranges differ
+    from the original run's, so exact-identity dedupe keeps both and coverage
+    would count their union. Events sharing a stable tool-call key are grouped
+    and only those carrying the group's highest parser_version survive. Events
+    without a tool_use_id have no stable call key and are never superseded.
+    """
+    max_versions: dict[tuple[object, ...], int] = {}
+    for event in events:
+        if not event.tool_use_id:
+            continue
+        key = _tool_call_key(event)
+        if event.parser_version > max_versions.get(key, -1):
+            max_versions[key] = event.parser_version
+    kept = [
+        event
+        for event in events
+        if not event.tool_use_id or event.parser_version >= max_versions[_tool_call_key(event)]
+    ]
+    return kept, len(events) - len(kept)
+
+
+def _tool_call_key(event: CoverageEvent) -> tuple[object, ...]:
+    return (
+        event.session_id,
+        event.turn_id,
+        event.tool_use_id,
+        event.agent,
+        event.source,
+        event.tool_name,
+        event.command,
+    )
+
+
+def _verify_content_anchors(
+    ranges: list[LineRange], current: list[str] | None
+) -> tuple[list[LineRange], bool]:
+    """Downgrade anchored ranges whose lines no longer match what was read."""
+    if current is None:
+        return ranges, False
+    verified: list[LineRange] = []
+    stale = False
+    for line_range in ranges:
+        normalized = line_range.normalized()
+        if (
+            normalized.digest
+            and line_range_digest(current, normalized.start, normalized.end) != normalized.digest
+        ):
+            stale = True
+            verified.append(
+                LineRange(
+                    start=normalized.start,
+                    end=normalized.end,
+                    confidence="low",
+                    weight=normalized.weight,
+                    digest=normalized.digest,
+                )
+            )
+        else:
+            verified.append(normalized)
+    return verified, stale
+
+
+def _bounded_summaries(
+    summaries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    elided = max(0, len(summaries) - MAX_RANGE_SUMMARIES)
+    if not elided:
+        return summaries, 0
+    return summaries[-MAX_RANGE_SUMMARIES:], elided
 
 
 def _least_confident(left: Confidence, right: Confidence) -> Confidence:

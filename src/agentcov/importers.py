@@ -6,6 +6,7 @@ from typing import Any
 
 from .git import find_repo_root
 from .models import CoverageEvent, LineRange
+from .paths import redact_secrets
 
 
 def import_agent_coverage(
@@ -59,7 +60,7 @@ def _events_from_coverage_item(
                 agent="import",
                 source="agent-coverage-import",
                 tool_name="import",
-                command=str(command) if command else None,
+                command=redact_secrets(str(command)) if command else None,
                 file=file,
                 ranges=[LineRange(start, end)],
                 kind="read",
